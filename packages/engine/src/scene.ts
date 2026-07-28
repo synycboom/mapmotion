@@ -1,6 +1,7 @@
 import type { CameraState, FrameState, Project } from './types';
 import { ease } from './easing';
 import { flyInterpolate } from './camera';
+import { titlesAt } from './title';
 
 /**
  * Evaluate the full scene at time tMs. Pure function — the single source of
@@ -15,6 +16,7 @@ export function sceneAt(project: Project, tMs: number): FrameState {
         return [r.id, ease(r.easing ?? 'easeInOutSine', local)];
       }),
     ),
+    titles: titlesAt(project.titles ?? [], tMs),
     markers: Object.fromEntries(
       project.markers.map((m) => {
         const dur = m.enterDurationMs ?? 400;

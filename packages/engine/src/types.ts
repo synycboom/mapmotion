@@ -9,6 +9,8 @@
  *  - Zero DOM / MapLibre imports — this package runs in Node for tests.
  */
 
+import type { TitleCard, TitleState } from './title';
+
 export type LngLat = [number, number];
 
 export interface CameraState {
@@ -68,6 +70,8 @@ export interface Project {
   camera: CameraKeyframe[];
   routes: RouteTrack[];
   markers: MarkerTrack[];
+  /** Intro/outro text cards. */
+  titles: TitleCard[];
 }
 
 /** Fully-resolved state of the scene at one instant. */
@@ -77,4 +81,6 @@ export interface FrameState {
   routeProgress: Record<string, number>;
   /** Marker id -> enter-animation state. */
   markers: Record<string, { opacity: number; scale: number }>;
+  /** Title cards visible at this instant, with their fade opacity. */
+  titles: TitleState[];
 }

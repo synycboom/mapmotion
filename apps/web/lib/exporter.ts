@@ -1,5 +1,6 @@
 import type { Map as MLMap } from 'maplibre-gl';
 import { sceneAt, type Project } from '@mapmotion/engine';
+import { drawTitles } from './drawTitles';
 import type { FrameApplier } from './applyFrame';
 import { Muxer as Mp4Muxer, ArrayBufferTarget as Mp4Target } from 'mp4-muxer';
 import { Muxer as WebmMuxer, ArrayBufferTarget as WebmTarget } from 'webm-muxer';
@@ -107,18 +108,21 @@ export async function exportVideo(
     if (encoderError) throw encoderError;
 
     const tMs = (i / fps) * 1000;
-    applier.apply(sceneAt(project, tMs));
+    const frame = sceneAt(project, tMs);
+    applier.apply(frame);
     await settle(map, settleCapMs);
 
     ctx.drawImage(mapCanvas, 0, 0, width, height);
+    // Same function the preview uses, so titles land identically.
+    drawTitles(ctx, frame.titles, width, height);
     drawOverlays(ctx, width, height, opts.watermark, opts.attribution);
 
-    const frame = new VideoFrame(canvas, {
+    const videoFrame = new VideoFrame(canvas, {
       timestamp: Math.round((i * 1e6) / fps),
       duration: Math.round(1e6 / fps),
     });
-    encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
-    frame.close();
+    encoder.encode(videoFrame, { keyFrame: i % (fps * 2) === 0 });
+    videoFrame.close();
 
     // Backpressure: don't let the encode queue grow unbounded.
     while (encoder.encodeQueueSize > 4) await sleep(2);

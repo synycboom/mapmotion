@@ -7,3 +7,4 @@ export * from './compile';
 export * from './search';
 export * from './simplify';
 export * from './importTrack';
+export * from './title';

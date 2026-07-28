@@ -35,20 +35,66 @@ export class FrameApplier {
     }
   }
 
+  /** Every layer/source id this applier owns, for clean teardown. */
+  private ownedLayers: string[] = [];
+  private ownedSources: string[] = [];
+
+  /**
+   * Remove anything a previous install left behind.
+   *
+   * install() runs on every style load AND every project change (different
+   * stop count = different route ids). Without this, re-installing hits
+   * MapLibre's "source already exists" and leaves the map half-wired — which
+   * then surfaces as `undefined.setData` on the next frame. Making install
+   * idempotent removes that whole class of bug.
+   */
+  private teardown(): void {
+    const map = this.map;
+    for (const id of this.ownedLayers) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    }
+    for (const id of this.ownedSources) {
+      if (map.getSource(id)) map.removeSource(id);
+    }
+    this.ownedLayers = [];
+    this.ownedSources = [];
+  }
+
+  /** Track ids as we add them so teardown knows what to clean up. */
+  private addSource(id: string, spec: Parameters<MLMap['addSource']>[1]): void {
+    if (this.map.getSource(id)) {
+      // Left over from an earlier applier on this same style.
+      const stale = this.map.getStyle()?.layers.filter(
+        (l) => (l as { source?: string }).source === id,
+      );
+      for (const l of stale ?? []) if (this.map.getLayer(l.id)) this.map.removeLayer(l.id);
+      this.map.removeSource(id);
+    }
+    this.map.addSource(id, spec);
+    this.ownedSources.push(id);
+  }
+
+  private addLayer(spec: Parameters<MLMap['addLayer']>[0]): void {
+    if (this.map.getLayer(spec.id)) this.map.removeLayer(spec.id);
+    this.map.addLayer(spec);
+    this.ownedLayers.push(spec.id);
+  }
+
   /**
    * Add route/marker sources+layers. Call after every style load —
    * `setStyle` wipes all custom sources/layers, so the editor re-installs
-   * on each style switch.
+   * on each style switch. Safe to call repeatedly.
    */
   install(theme: MarkerTheme = DEFAULT_THEME): void {
+    this.teardown();
     const map = this.map;
 
     for (const r of this.project.routes) {
-      map.addSource(`route-${r.id}`, {
+      this.addSource(`route-${r.id}`, {
         type: 'geojson',
         data: emptyLine(),
       });
-      map.addLayer({
+      this.addLayer({
         id: `route-line-${r.id}`,
         type: 'line',
         source: `route-${r.id}`,
@@ -59,8 +105,8 @@ export class FrameApplier {
         },
       });
       // Moving head dot at the tip of the drawn route.
-      map.addSource(`head-${r.id}`, { type: 'geojson', data: emptyPoint() });
-      map.addLayer({
+      this.addSource(`head-${r.id}`, { type: 'geojson', data: emptyPoint() });
+      this.addLayer({
         id: `route-head-${r.id}`,
         type: 'circle',
         source: `head-${r.id}`,
@@ -73,7 +119,7 @@ export class FrameApplier {
       });
     }
 
-    map.addSource('markers', {
+    this.addSource('markers', {
       type: 'geojson',
       promoteId: 'id',
       data: {
@@ -86,7 +132,7 @@ export class FrameApplier {
         })),
       },
     });
-    map.addLayer({
+    this.addLayer({
       id: 'marker-dots',
       type: 'circle',
       source: 'markers',
@@ -99,7 +145,7 @@ export class FrameApplier {
         'circle-stroke-opacity': ['coalesce', ['feature-state', 'opacity'], 0],
       },
     });
-    map.addLayer({
+    this.addLayer({
       id: 'marker-labels',
       type: 'symbol',
       source: 'markers',
@@ -135,8 +181,11 @@ export class FrameApplier {
       const progress = frame.routeProgress[r.id] ?? 0;
       const cum = this.cumulative.get(r.id)!;
       const coords = sliceLine(r.coordinates, cum, progress);
-      const routeSrc = map.getSource(`route-${r.id}`) as maplibregl.GeoJSONSource;
-      const headSrc = map.getSource(`head-${r.id}`) as maplibregl.GeoJSONSource;
+      const routeSrc = map.getSource(`route-${r.id}`) as maplibregl.GeoJSONSource | undefined;
+      const headSrc = map.getSource(`head-${r.id}`) as maplibregl.GeoJSONSource | undefined;
+      // A frame can land between a style swap and the re-install; skip
+      // rather than throw — the next frame will paint correctly.
+      if (!routeSrc || !headSrc) continue;
       if (coords.length >= 2) {
         routeSrc.setData({
           type: 'Feature',
@@ -161,6 +210,7 @@ export class FrameApplier {
       }
     }
 
+    if (!map.getSource('markers')) return;
     for (const m of this.project.markers) {
       const s = frame.markers[m.id] ?? { opacity: 0, scale: 0 };
       map.setFeatureState(

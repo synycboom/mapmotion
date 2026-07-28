@@ -6,6 +6,7 @@ import type {
 } from './types';
 import { greatCircleArc, distanceMeters } from './geo';
 import { simplifyLine } from './simplify';
+import { buildTitleCards } from './title';
 
 export interface TripStop {
   name: string;
@@ -43,6 +44,11 @@ export interface TripOptions {
   legGeometries?: readonly (readonly LngLat[] | null | undefined)[];
   /** Simplification tolerance in degrees for supplied geometry. */
   simplifyTolerance?: number;
+  /** Intro/outro card text. Omit or leave blank for no titles. */
+  title?: string | null;
+  subtitle?: string | null;
+  /** Repeat the title as an end card. */
+  outro?: boolean;
 }
 
 /**
@@ -118,7 +124,14 @@ export function compileTrip(
     durationMs: opts.format?.durationMs ?? t + 400,
   };
 
-  return { version: 1, name, format, camera, routes, markers };
+  const titles = buildTitleCards({
+    title: opts.title,
+    subtitle: opts.subtitle,
+    durationMs: format.durationMs,
+    outro: opts.outro ?? false,
+  });
+
+  return { version: 1, name, format, camera, routes, markers, titles };
 }
 
 function cam(center: LngLat, zoom: number) {

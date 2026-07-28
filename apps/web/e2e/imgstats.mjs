@@ -3,6 +3,22 @@
 // distinct colour; a real map has many.
 import { execFileSync } from 'node:child_process';
 
+/** Duration in seconds, or null if ffprobe can't tell. */
+export function durationOf(file) {
+  try {
+    const out = execFileSync('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      file,
+    ]).toString().trim();
+    const n = Number(out);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 export function rawStats(file, { frameSelect = null, w = 160, h = 90 } = {}) {
   const args = ['-v', 'error'];
   if (frameSelect !== null) args.push('-ss', String(frameSelect));

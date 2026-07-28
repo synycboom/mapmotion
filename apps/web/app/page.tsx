@@ -26,6 +26,8 @@ import { PlaceSearch } from '../components/PlaceSearch';
 import { StopList } from '../components/StopList';
 import { useLegRoutes } from '../lib/useLegRoutes';
 import { TrackImport } from '../components/TrackImport';
+import { TEMPLATES, getTemplate } from '../lib/templates';
+import { drawTitles } from '../lib/drawTitles';
 
 declare global {
   interface Window {
@@ -44,6 +46,7 @@ const DEFAULT_STOPS: TripStop[] = [
 
 export default function Editor() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const applierRef = useRef<FrameApplier | null>(null);
   const projectRef = useRef<Project | null>(null);
@@ -61,6 +64,9 @@ export default function Editor() {
   // until the file is re-imported (or the project is loaded from the
   // library, which does persist geometry).
   const [trackGeometries, setTrackGeometries] = useState<(LngLat[] | null)[]>([]);
+  const [title, setTitle] = useState('');
+  const [subtitle, setSubtitle] = useState('');
+  const [outro, setOutro] = useState(false);
   const [format, setFormat] = useState<FormatId>('16x9');
   const [speed, setSpeed] = useState(1);
   const [res, setRes] = useState(1);
@@ -119,8 +125,11 @@ export default function Editor() {
       legMs: Math.round(2600 / speed),
       legModes,
       legGeometries,
+      title,
+      subtitle,
+      outro,
     });
-  }, [stops, format, speed, res, legModes, legGeometries]);
+  }, [stops, format, speed, res, legModes, legGeometries, title, subtitle, outro]);
 
   useEffect(() => {
     projectRef.current = project;
@@ -254,7 +263,10 @@ export default function Editor() {
         textColor: s.markerTextColor,
         haloColor: s.markerHaloColor,
       });
-      applier.apply(sceneAt(proj, Math.min(playheadRef.current, proj.format.durationMs)));
+      const t = Math.min(playheadRef.current, proj.format.durationMs);
+      const frame = sceneAt(proj, t);
+      applier.apply(frame);
+      paintOverlay(frame.titles, proj.format.width, proj.format.height);
     } catch (e) {
       setError(`Layer install failed: ${e}`);
     }
@@ -354,7 +366,30 @@ export default function Editor() {
     const clamped = Math.min(Math.max(tMs, 0), proj.format.durationMs);
     playheadRef.current = clamped;
     setPlayheadMs(clamped);
-    applier.apply(sceneAt(proj, clamped));
+    const frame = sceneAt(proj, clamped);
+    applier.apply(frame);
+    paintOverlay(frame.titles, proj.format.width, proj.format.height);
+  };
+
+  /**
+   * Titles in the preview go through the SAME drawTitles() the exporter uses,
+   * on a transparent canvas over the map — so what you see is what you get.
+   */
+  const paintOverlay = (
+    titles: ReturnType<typeof sceneAt>['titles'],
+    w: number,
+    h: number,
+  ) => {
+    const c = overlayRef.current;
+    if (!c) return;
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+    }
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, w, h);
+    drawTitles(ctx, titles, w, h);
   };
 
   const togglePlay = () => {
@@ -487,6 +522,21 @@ export default function Editor() {
     setPlayheadMs(0);
   };
 
+  const applyTemplate = (id: string) => {
+    const tpl = getTemplate(id);
+    if (!tpl) return;
+    setStops(tpl.stops.map((x) => ({ ...x, coordinate: [...x.coordinate] as LngLat })));
+    setLegModes([...tpl.legModes]);
+    setTrackGeometries(tpl.legModes.map(() => null));
+    setFormat(tpl.format);
+    setSpeed(tpl.speed);
+    setTitle(tpl.label);
+    setSubtitle('');
+    playheadRef.current = 0;
+    setPlayheadMs(0);
+    if (tpl.styleId !== styleId) void switchStyle(tpl.styleId);
+  };
+
   const setLegMode = (leg: number, mode: LegMode) =>
     setLegModes((prev) => {
       const next = [...prev];
@@ -507,6 +557,29 @@ export default function Editor() {
           <span style={{ opacity: 0.5, fontSize: 12 }}>Quick mode</span>
         </div>
 
+        <div style={{ marginBottom: 12 }}>
+          <Label>Start from a template</Label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+            {TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.id}
+                data-testid={`template-${tpl.id}`}
+                onClick={() => applyTemplate(tpl.id)}
+                title={tpl.blurb}
+                disabled={exporting}
+                style={{
+                  ...btn,
+                  padding: '5px 10px',
+                  fontSize: 11,
+                  borderRadius: 999,
+                }}
+              >
+                {tpl.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <PlaceSearch onPick={addStop} />
         <TrackImport onImport={importGpx} />
         <StopList
@@ -517,6 +590,45 @@ export default function Editor() {
           onMove={moveStop}
           onSetLegMode={setLegMode}
         />
+
+        <div style={{ marginTop: 18 }}>
+          <Label>Title card</Label>
+          <input
+            data-testid="title-input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Video title (optional)"
+            disabled={exporting}
+            style={inputStyle}
+          />
+          <input
+            data-testid="subtitle-input"
+            value={subtitle}
+            onChange={(e) => setSubtitle(e.target.value)}
+            placeholder="Subtitle"
+            disabled={exporting || !title}
+            style={{ ...inputStyle, marginTop: 5 }}
+          />
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 11,
+              opacity: title ? 0.8 : 0.4,
+              marginTop: 6,
+            }}
+          >
+            <input
+              data-testid="outro-toggle"
+              type="checkbox"
+              checked={outro}
+              disabled={exporting || !title}
+              onChange={(e) => setOutro(e.target.checked)}
+            />
+            Repeat as an end card
+          </label>
+        </div>
 
         <div style={{ marginTop: 18 }}>
           <Label>Format</Label>
@@ -605,6 +717,18 @@ export default function Editor() {
               height: dims.height,
               transform: `scale(${scale})`,
               transformOrigin: 'top left',
+            }}
+          />
+          <canvas
+            ref={overlayRef}
+            data-testid="title-overlay"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: dims.width * scale,
+              height: dims.height * scale,
+              pointerEvents: 'none',
             }}
           />
           <div
@@ -708,6 +832,17 @@ function Label({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  background: '#111c2e',
+  color: '#e6edf5',
+  border: '1px solid #34496b',
+  borderRadius: 6,
+  padding: '7px 10px',
+  fontSize: 13,
+  boxSizing: 'border-box',
+};
 
 const btn: React.CSSProperties = {
   background: '#1c2a42',
