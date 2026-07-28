@@ -40,21 +40,30 @@ export class FrameApplier {
   private ownedSources: string[] = [];
 
   /**
-   * Remove anything a previous install left behind.
+   * Remove everything Mapmotion owns from the map, by naming convention.
    *
-   * install() runs on every style load AND every project change (different
-   * stop count = different route ids). Without this, re-installing hits
-   * MapLibre's "source already exists" and leaves the map half-wired — which
-   * then surfaces as `undefined.setData` on the next frame. Making install
-   * idempotent removes that whole class of bug.
+   * Sweeping by prefix rather than by this instance's own list is deliberate:
+   * a new FrameApplier is constructed on every project change, so its list
+   * starts empty and it would have no idea about the *previous* applier's
+   * layers. When a trip shrinks from 3 stops to 2, `route-route-2` has no
+   * counterpart in the new project and would otherwise be orphaned on the map
+   * forever — invisible, but accumulating, and enough to make code that looks
+   * up "the route source" find the wrong one.
    */
   private teardown(): void {
     const map = this.map;
-    for (const id of this.ownedLayers) {
-      if (map.getLayer(id)) map.removeLayer(id);
+    const style = map.getStyle();
+    if (!style) return;
+
+    for (const layer of style.layers ?? []) {
+      if (isOwnedLayer(layer.id) && map.getLayer(layer.id)) {
+        map.removeLayer(layer.id);
+      }
     }
-    for (const id of this.ownedSources) {
-      if (map.getSource(id)) map.removeSource(id);
+    for (const id of Object.keys(style.sources ?? {})) {
+      if (isOwnedSource(id) && map.getSource(id)) {
+        map.removeSource(id);
+      }
     }
     this.ownedLayers = [];
     this.ownedSources = [];
@@ -223,6 +232,24 @@ export class FrameApplier {
 
 // maplibre types are imported as a namespace only where needed
 import type maplibregl from 'maplibre-gl';
+
+/**
+ * Ownership is decided by id prefix. Keep these in sync with install().
+ * Anything else on the map belongs to the basemap style and must be left
+ * alone.
+ */
+function isOwnedLayer(id: string): boolean {
+  return (
+    id.startsWith('route-line-') ||
+    id.startsWith('route-head-') ||
+    id === 'marker-dots' ||
+    id === 'marker-labels'
+  );
+}
+
+function isOwnedSource(id: string): boolean {
+  return id.startsWith('route-') || id.startsWith('head-') || id === 'markers';
+}
 
 function emptyLine(): GeoJSON.Feature {
   return {

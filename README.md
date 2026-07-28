@@ -41,7 +41,7 @@ state lives in the URL, so any map is a shareable link:
 | `s` | stops, `name,lng,lat` joined by `~` |
 | `f` | format: `16x9`, `9x16`, `1x1` |
 | `style` | `liberty`, `bright`, `positron`, `paper`, `minimal` |
-| `l` | leg modes, one char per leg: `f`=flight, `d`=drive |
+| `l` | leg modes, one char per leg: `f`=flight, `d`=drive, `t`=imported track |
 | `spd` | speed multiplier (0.5–2.5) |
 | `res` | output resolution scale 0.25–1 (draft exports) |
 | `styleUrl` | load an arbitrary MapLibre style (dev) |
@@ -61,9 +61,12 @@ to point at a different OSRM-compatible instance.
 ## Tests
 
 ```bash
-npm test                                    # 45 engine unit tests
+npm test                                    # 73 engine unit tests
 node apps/web/e2e/export-test.mjs           # headless export proof
 xvfb-run -a node apps/web/e2e/headful-style-test.mjs   # remote vector style + export
 xvfb-run -a node apps/web/e2e/quickmode-test.mjs       # full Quick mode UI flow
 xvfb-run -a node apps/web/e2e/routes-test.mjs          # driving routes + failure fallback
+xvfb-run -a node apps/web/e2e/import-test.mjs          # GPX/KML import
+xvfb-run -a node apps/web/e2e/titles-templates-test.mjs # templates + title cards
+xvfb-run -a node apps/web/e2e/library-test.mjs         # saved projects + corrupt storage
 ```

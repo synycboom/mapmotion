@@ -28,6 +28,8 @@ import { useLegRoutes } from '../lib/useLegRoutes';
 import { TrackImport } from '../components/TrackImport';
 import { TEMPLATES, getTemplate } from '../lib/templates';
 import { drawTitles } from '../lib/drawTitles';
+import { ProjectLibrary } from '../components/ProjectLibrary';
+import { saveProject, type SavedProject } from '../lib/projectLibrary';
 
 declare global {
   interface Window {
@@ -67,6 +69,8 @@ export default function Editor() {
   const [title, setTitle] = useState('');
   const [subtitle, setSubtitle] = useState('');
   const [outro, setOutro] = useState(false);
+  const [libraryKey, setLibraryKey] = useState(0);
+  const [savedAs, setSavedAs] = useState<string | null>(null);
   const [format, setFormat] = useState<FormatId>('16x9');
   const [speed, setSpeed] = useState(1);
   const [res, setRes] = useState(1);
@@ -522,6 +526,39 @@ export default function Editor() {
     setPlayheadMs(0);
   };
 
+  const handleSave = (name: string) => {
+    const rec = saveProject({
+      name,
+      stops,
+      legModes,
+      trackGeometries,
+      format,
+      styleId,
+      speed,
+      title,
+      subtitle,
+      outro,
+    });
+    setSavedAs(rec ? name : null);
+    setError(rec ? null : 'Could not save — browser storage is unavailable or full.');
+    setLibraryKey((n) => n + 1);
+  };
+
+  const handleLoad = (p: SavedProject) => {
+    setStops(p.stops.map((x) => ({ ...x, coordinate: [...x.coordinate] as LngLat })));
+    setLegModes([...p.legModes]);
+    setTrackGeometries(p.trackGeometries?.map((g) => (g ? [...g] : null)) ?? []);
+    setFormat(p.format);
+    setSpeed(p.speed);
+    setTitle(p.title ?? '');
+    setSubtitle(p.subtitle ?? '');
+    setOutro(!!p.outro);
+    setSavedAs(p.name);
+    playheadRef.current = 0;
+    setPlayheadMs(0);
+    if (p.styleId && p.styleId !== styleId) void switchStyle(p.styleId);
+  };
+
   const applyTemplate = (id: string) => {
     const tpl = getTemplate(id);
     if (!tpl) return;
@@ -686,6 +723,13 @@ export default function Editor() {
             ))}
           </select>
         </div>
+
+        <ProjectLibrary
+          onLoad={handleLoad}
+          onSave={handleSave}
+          currentName={title || savedAs || ''}
+          reloadKey={libraryKey}
+        />
 
         <button
           onClick={() => {
