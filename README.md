@@ -26,3 +26,35 @@ Import the repo in Vercel and set **Root Directory** to `apps/web` (keep "Includ
 1. No `Date.now()` / `Math.random()` in the engine — time enters as `tMs`.
 2. The engine never reads from the map; it only writes FrameState to it (`jumpTo`, never `easeTo`).
 3. Easing/interpolation are pure functions, unit-tested against golden values.
+
+## Quick mode
+
+Search for cities, build a trip, export a video — no account needed. Project
+state lives in the URL, so any map is a shareable link:
+
+```
+/?s=Bangkok,100.5018,13.7563~Tokyo,139.6917,35.6895&f=9x16&style=paper&spd=1.4
+```
+
+| param | meaning |
+|---|---|
+| `s` | stops, `name,lng,lat` joined by `~` |
+| `f` | format: `16x9`, `9x16`, `1x1` |
+| `style` | `liberty`, `bright`, `positron`, `paper`, `minimal` |
+| `spd` | speed multiplier (0.5–2.5) |
+| `res` | output resolution scale 0.25–1 (draft exports) |
+| `styleUrl` | load an arbitrary MapLibre style (dev) |
+| `autotest` | run an export automatically (CI) |
+
+Place search hits `/api/geocode`, which answers from a bundled index of ~6,500
+notable cities (instant, offline, no rate limit) and only falls back to an
+upstream geocoder when local results are thin.
+
+## Tests
+
+```bash
+npm test                                    # 32 engine unit tests
+node apps/web/e2e/export-test.mjs           # headless export proof
+xvfb-run -a node apps/web/e2e/headful-style-test.mjs   # remote vector style + export
+xvfb-run -a node apps/web/e2e/quickmode-test.mjs       # full Quick mode UI flow
+```

@@ -28,7 +28,7 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
 console.log('Rendering HD demo (this takes a few minutes headless)…');
-await page.goto(`http://localhost:${PORT}/?autotest=1&hd=1`, { waitUntil: 'load' });
+await page.goto(`http://localhost:${PORT}/?autotest=1`, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__exportResult !== undefined, null, {
   timeout: 900_000,
   polling: 2000,

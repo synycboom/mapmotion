@@ -66,7 +66,7 @@ page.on('console', (msg) => {
 page.on('pageerror', (err) => console.log(`[pageerror] ${err.message}`));
 
 console.log('Loading autotest page…');
-await page.goto(`http://localhost:${PORT}/?autotest=1`, { waitUntil: 'load' });
+await page.goto(`http://localhost:${PORT}/?autotest=1&res=0.5`, { waitUntil: 'load' });
 
 await page.waitForFunction(() => window.__exportResult !== undefined, null, {
   timeout: 300_000,

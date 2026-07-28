@@ -4,3 +4,4 @@ export * from './camera';
 export * from './geo';
 export * from './scene';
 export * from './compile';
+export * from './search';

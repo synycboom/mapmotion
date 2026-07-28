@@ -3,8 +3,8 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "prebuild": "node scripts/build-countries.mjs",
-    "predev": "node scripts/build-countries.mjs",
+    "prebuild": "node scripts/build-countries.mjs && node scripts/build-cities.mjs",
+    "predev": "node scripts/build-countries.mjs && node scripts/build-cities.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
@@ -21,6 +21,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
+    "all-the-cities": "^3.1.0",
     "geojson-vt": "^4.0.3",
     "playwright-core": "^1.48.0",
     "topojson-client": "^3.1.0",
