@@ -5,6 +5,7 @@ import {
   type FrameState,
   type Project,
 } from '@mapmotion/engine';
+import { ensureVehicleIcons, vehicleImageId } from './vehicleIcons';
 
 /**
  * Applies a FrameState to a MapLibre map. Uses jumpTo (never easeTo) so the
@@ -94,6 +95,21 @@ export class FrameApplier {
    * `setStyle` wipes all custom sources/layers, so the editor re-installs
    * on each style switch. Safe to call repeatedly.
    */
+  /**
+   * Every icon+colour this project's vehicles need.
+   * Await `ensureIcons()` before rendering frames that must be complete —
+   * an icon arriving late would produce an export frame with no vehicle.
+   */
+  vehiclePairs(): Array<{ icon: string; color: string }> {
+    return this.project.routes
+      .filter((r) => r.vehicle)
+      .map((r) => ({ icon: r.vehicle!.icon, color: r.vehicle!.color }));
+  }
+
+  ensureIcons(): Promise<void> {
+    return ensureVehicleIcons(this.map, this.vehiclePairs());
+  }
+
   install(theme: MarkerTheme = DEFAULT_THEME): void {
     this.teardown();
     const map = this.map;
@@ -113,19 +129,43 @@ export class FrameApplier {
           'line-width': r.widthPx ?? 4,
         },
       });
-      // Moving head dot at the tip of the drawn route.
-      this.addSource(`head-${r.id}`, { type: 'geojson', data: emptyPoint() });
-      this.addLayer({
-        id: `route-head-${r.id}`,
-        type: 'circle',
-        source: `head-${r.id}`,
-        paint: {
-          'circle-radius': (r.widthPx ?? 4) + 3,
-          'circle-color': '#ffffff',
-          'circle-stroke-color': r.color ?? '#e8590c',
-          'circle-stroke-width': 2,
-        },
-      });
+      if (r.vehicle) {
+        // A sprite that rides the path, rotated to face its direction of
+        // travel. Replaces the plain head dot for modes that have a vehicle.
+        this.addSource(`vehicle-${r.id}`, { type: 'geojson', data: emptyPoint() });
+        this.addLayer({
+          id: `route-vehicle-${r.id}`,
+          type: 'symbol',
+          source: `vehicle-${r.id}`,
+          layout: {
+            'icon-image': vehicleImageId(r.vehicle.icon, r.vehicle.color),
+            'icon-size': ['*', 0.55, ['coalesce', ['get', 'size'], 1]],
+            // Rotate against the map so the vehicle keeps facing along the
+            // road even when the camera itself is rotating.
+            'icon-rotation-alignment': 'map',
+            'icon-rotate': ['coalesce', ['get', 'bearing'], 0],
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
+          paint: {
+            'icon-opacity': ['coalesce', ['get', 'opacity'], 0],
+          },
+        });
+      } else {
+        // Moving head dot at the tip of the drawn route.
+        this.addSource(`head-${r.id}`, { type: 'geojson', data: emptyPoint() });
+        this.addLayer({
+          id: `route-head-${r.id}`,
+          type: 'circle',
+          source: `head-${r.id}`,
+          paint: {
+            'circle-radius': (r.widthPx ?? 4) + 3,
+            'circle-color': '#ffffff',
+            'circle-stroke-color': r.color ?? '#e8590c',
+            'circle-stroke-width': 2,
+          },
+        });
+      }
     }
 
     this.addSource('markers', {
@@ -191,18 +231,45 @@ export class FrameApplier {
       const cum = this.cumulative.get(r.id)!;
       const coords = sliceLine(r.coordinates, cum, progress);
       const routeSrc = map.getSource(`route-${r.id}`) as maplibregl.GeoJSONSource | undefined;
-      const headSrc = map.getSource(`head-${r.id}`) as maplibregl.GeoJSONSource | undefined;
       // A frame can land between a style swap and the re-install; skip
       // rather than throw — the next frame will paint correctly.
-      if (!routeSrc || !headSrc) continue;
-      if (coords.length >= 2) {
-        routeSrc.setData({
-          type: 'Feature',
-          properties: {},
-          geometry: { type: 'LineString', coordinates: coords },
-        });
+      if (!routeSrc) continue;
+      routeSrc.setData(
+        coords.length >= 2
+          ? {
+              type: 'Feature',
+              properties: {},
+              geometry: { type: 'LineString', coordinates: coords },
+            }
+          : emptyLine(),
+      );
+
+      const vehicle = frame.vehicles[r.id];
+      const vehicleSrc = map.getSource(`vehicle-${r.id}`) as
+        | maplibregl.GeoJSONSource
+        | undefined;
+      if (vehicleSrc) {
+        vehicleSrc.setData(
+          vehicle && vehicle.opacity > 0
+            ? {
+                type: 'Feature',
+                properties: {
+                  bearing: vehicle.bearing,
+                  opacity: vehicle.opacity,
+                  size: vehicle.size,
+                },
+                geometry: { type: 'Point', coordinates: vehicle.coordinate },
+              }
+            : emptyPoint(),
+        );
+      }
+
+      const headSrc = map.getSource(`head-${r.id}`) as
+        | maplibregl.GeoJSONSource
+        | undefined;
+      if (headSrc) {
         headSrc.setData(
-          progress > 0 && progress < 1
+          coords.length >= 2 && progress > 0 && progress < 1
             ? {
                 type: 'Feature',
                 properties: {},
@@ -213,9 +280,6 @@ export class FrameApplier {
               }
             : emptyPoint(),
         );
-      } else {
-        routeSrc.setData(emptyLine());
-        headSrc.setData(emptyPoint());
       }
     }
 
@@ -242,13 +306,19 @@ function isOwnedLayer(id: string): boolean {
   return (
     id.startsWith('route-line-') ||
     id.startsWith('route-head-') ||
+    id.startsWith('route-vehicle-') ||
     id === 'marker-dots' ||
     id === 'marker-labels'
   );
 }
 
 function isOwnedSource(id: string): boolean {
-  return id.startsWith('route-') || id.startsWith('head-') || id === 'markers';
+  return (
+    id.startsWith('route-') ||
+    id.startsWith('head-') ||
+    id.startsWith('vehicle-') ||
+    id === 'markers'
+  );
 }
 
 function emptyLine(): GeoJSON.Feature {

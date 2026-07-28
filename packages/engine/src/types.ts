@@ -10,6 +10,7 @@
  */
 
 import type { TitleCard, TitleState } from './title';
+import type { TravelMode } from './travel';
 
 export type LngLat = [number, number];
 
@@ -41,10 +42,26 @@ export interface CameraKeyframe {
   easing?: EasingId;
 }
 
+export interface VehicleConfig {
+  /** Sprite id, e.g. 'plane' | 'car' | 'ship'. */
+  icon: string;
+  color: string;
+  /** Sprite scale multiplier. */
+  size?: number;
+}
+
 export interface RouteTrack {
   id: string;
   /** Route geometry (precomputed, e.g. great-circle arc or road geometry). */
   coordinates: LngLat[];
+  /** How this leg is travelled — drives geometry, routing and vehicle. */
+  mode?: TravelMode;
+  /** Vehicle that rides along the path. Omit for no vehicle. */
+  vehicle?: VehicleConfig;
+  /** Metres, when a router supplied the geometry. */
+  distanceMeters?: number;
+  /** Seconds, when a router supplied the geometry. */
+  durationSeconds?: number;
   /** Draw-on animation window. */
   startMs: number;
   endMs: number;
@@ -83,4 +100,20 @@ export interface FrameState {
   markers: Record<string, { opacity: number; scale: number }>;
   /** Title cards visible at this instant, with their fade opacity. */
   titles: TitleState[];
+  /**
+   * Vehicle position and heading per route id, for routes that have one.
+   * Absent while the leg is not in motion.
+   */
+  vehicles: Record<string, VehicleState>;
+}
+
+export interface VehicleState {
+  coordinate: LngLat;
+  /** Degrees clockwise from north — the sprite's icon-rotate. */
+  bearing: number;
+  icon: string;
+  color: string;
+  size: number;
+  /** Fades in/out at the ends of the leg so it doesn't pop. */
+  opacity: number;
 }

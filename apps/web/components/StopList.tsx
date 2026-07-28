@@ -1,12 +1,14 @@
 'use client';
 
 import type { LegMode, TripStop } from '@mapmotion/engine';
-import type { LegStatus } from '../lib/useLegRoutes';
+import type { LegMetrics, LegStatus } from '../lib/useLegRoutes';
+import { LegConnector } from './LegConnector';
 
 export function StopList({
   stops,
   legModes,
   legStatuses,
+  legMetrics,
   onRemove,
   onMove,
   onSetLegMode,
@@ -14,6 +16,7 @@ export function StopList({
   stops: TripStop[];
   legModes: LegMode[];
   legStatuses: LegStatus[];
+  legMetrics: (LegMetrics | null)[];
   onRemove: (i: number) => void;
   onMove: (i: number, dir: -1 | 1) => void;
   onSetLegMode: (leg: number, mode: LegMode) => void;
@@ -90,8 +93,9 @@ export function StopList({
             {i < stops.length - 1 && (
               <LegConnector
                 index={i}
-                mode={legModes[i] ?? 'flight'}
+                mode={legModes[i] ?? 'air'}
                 status={legStatuses[i] ?? 'idle'}
+                metrics={legMetrics[i] ?? null}
                 onSet={onSetLegMode}
               />
             )}
@@ -100,84 +104,6 @@ export function StopList({
       </ol>
     </div>
   );
-}
-
-function LegConnector({
-  index,
-  mode,
-  status,
-  onSet,
-}: {
-  index: number;
-  mode: LegMode;
-  status: LegStatus;
-  onSet: (leg: number, mode: LegMode) => void;
-}) {
-  return (
-    <div
-      data-testid={`leg-${index}`}
-      data-mode={mode}
-      data-status={status}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '3px 0 3px 18px',
-        fontSize: 11,
-      }}
-    >
-      <span style={{ opacity: 0.3 }}>│</span>
-      <button
-        onClick={() => onSet(index, 'flight')}
-        aria-label={`Leg ${index + 1} as flight`}
-        style={pill(mode === 'flight')}
-      >
-        ✈ Flight
-      </button>
-      <button
-        onClick={() => onSet(index, 'drive')}
-        aria-label={`Leg ${index + 1} as drive`}
-        style={pill(mode === 'drive')}
-      >
-        🚗 Drive
-      </button>
-      {mode === 'track' && (
-        <span style={pill(true)}>📍 Imported track</span>
-      )}
-      {mode === 'drive' && status === 'loading' && (
-        <span style={{ opacity: 0.5 }}>finding roads…</span>
-      )}
-      {mode === 'drive' && status === 'fallback' && (
-        <span
-          title="No road route between these points — showing a direct line instead."
-          style={{ color: '#ffc078' }}
-        >
-          no road route
-        </span>
-      )}
-      {mode === 'track' && status === 'fallback' && (
-        <span
-          title="Track geometry isn't stored in the link. Re-import the file, or load the project from your library."
-          style={{ color: '#ffc078' }}
-        >
-          track not in link — re-import
-        </span>
-      )}
-    </div>
-  );
-}
-
-function pill(active: boolean): React.CSSProperties {
-  return {
-    background: active ? '#e8590c' : 'transparent',
-    color: active ? '#fff' : '#9fb0c8',
-    border: `1px solid ${active ? '#e8590c' : '#2c3d5c'}`,
-    borderRadius: 999,
-    padding: '2px 9px',
-    fontSize: 11,
-    cursor: 'pointer',
-    lineHeight: 1.5,
-  };
 }
 
 function iconBtn(disabled: boolean): React.CSSProperties {

@@ -61,7 +61,7 @@ export default function Editor() {
 
   const [booted, setBooted] = useState(false);
   const [stops, setStops] = useState<TripStop[]>(DEFAULT_STOPS);
-  const [legModes, setLegModes] = useState<LegMode[]>(['flight', 'flight']);
+  const [legModes, setLegModes] = useState<LegMode[]>(['air', 'air']);
   // Geometry from imported GPX/KML, parallel to legs. Too large for the URL,
   // so an imported leg that is reloaded from a link falls back to an arc
   // until the file is re-imported (or the project is loaded from the
@@ -97,7 +97,7 @@ export default function Editor() {
 
   // Road geometry for any leg set to 'drive'. Missing/failed lookups come
   // back as null and compileTrip arcs instead.
-  const { geometries: routedGeometries, statuses: routeStatuses } = useLegRoutes(
+  const { geometries: routedGeometries, statuses: routeStatuses, metrics: legMetrics } = useLegRoutes(
     stops,
     legModes,
   );
@@ -107,7 +107,7 @@ export default function Editor() {
   const legGeometries = useMemo(
     () =>
       Array.from({ length: Math.max(0, stops.length - 1) }, (_, i) =>
-        legModes[i] === 'track'
+        legModes[i] === 'file'
           ? trackGeometries[i] ?? null
           : routedGeometries[i] ?? null,
       ),
@@ -117,7 +117,7 @@ export default function Editor() {
   const legStatuses = useMemo(
     () =>
       Array.from({ length: Math.max(0, stops.length - 1) }, (_, i) => {
-        if (legModes[i] !== 'track') return routeStatuses[i] ?? 'idle';
+        if (legModes[i] !== 'file') return routeStatuses[i] ?? 'idle';
         return trackGeometries[i]?.length ? 'ok' : 'fallback';
       }),
     [stops.length, legModes, trackGeometries, routeStatuses],
@@ -290,22 +290,51 @@ export default function Editor() {
       const frame = sceneAt(proj, t);
       applier.apply(frame);
       paintOverlay(frame.titles, proj.format.width, proj.format.height);
+      // Rasterise vehicle sprites in the background; the next frame picks
+      // them up. Export awaits this explicitly before capturing.
+      void applier.ensureIcons().then(() => {
+        if (applierRef.current === applier) {
+          applier.apply(sceneAt(proj, playheadRef.current));
+        }
+      });
     } catch (e) {
       setError(`Layer install failed: ${e}`);
     }
   }, []);
 
-  // ---- react to project changes (stops / format / speed) ----
+  // ---- react to project changes (stops / format / speed / geometry) ----
   useEffect(() => {
     if (!booted || !project) return;
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map) return;
+
     playingRef.current = false;
     setPlaying(false);
     playheadRef.current = 0;
     setPlayheadMs(0);
-    map.resize();
-    rebuildLayers();
+
+    let cancelled = false;
+    const applyChange = () => {
+      if (cancelled || mapRef.current !== map) return;
+      map.resize();
+      rebuildLayers();
+    };
+
+    if (map.isStyleLoaded()) {
+      applyChange();
+    } else {
+      // The style can still be loading when a project change lands — most
+      // often because road geometry arrived while tiles were in flight.
+      // Waiting for idle rather than bailing out is essential: an early
+      // return here silently drops the new geometry and the map keeps
+      // showing the old arc forever, with no error and no retry.
+      map.once('idle', applyChange);
+    }
+
+    return () => {
+      cancelled = true;
+      map.off('idle', applyChange);
+    };
   }, [project, booted, rebuildLayers]);
 
   // ---- keep the URL in sync so the map is shareable ----
@@ -480,7 +509,7 @@ export default function Editor() {
   // disagree (a mismatch would silently mis-assign modes to legs).
   const addStop = (hit: PlaceHit) => {
     setStops((prev) => [...prev, { name: hit.name, coordinate: hit.coordinate }]);
-    setLegModes((prev) => [...prev, 'flight']);
+    setLegModes((prev) => [...prev, 'air']);
     setTrackGeometries((prev) => [...prev, null]);
     setLegDurations((prev) => [...prev, null]);
   };
@@ -512,7 +541,7 @@ export default function Editor() {
     setLegModes((prev) => {
       const next = [...prev];
       for (const leg of touched) {
-        if (leg >= 0 && leg < next.length) next[leg] = 'flight';
+        if (leg >= 0 && leg < next.length) next[leg] = 'air';
       }
       return next;
     });
@@ -539,13 +568,13 @@ export default function Editor() {
         { name: t.waypoints[0]?.name ?? 'Start', coordinate: start },
         { name: t.waypoints[t.waypoints.length - 1]?.name ?? t.name ?? 'Finish', coordinate: end },
       ]);
-      setLegModes(['track']);
+      setLegModes(['file']);
       setTrackGeometries([t.track]);
       setLegDurations([null]);
       setStopDwells([]);
     } else if (t.waypoints.length >= 2) {
       setStops(t.waypoints.map((w) => ({ ...w })));
-      setLegModes(t.waypoints.slice(1).map(() => 'flight' as LegMode));
+      setLegModes(t.waypoints.slice(1).map(() => 'air' as LegMode));
       setTrackGeometries(t.waypoints.slice(1).map(() => null));
       setLegDurations(t.waypoints.slice(1).map(() => null));
       setStopDwells([]);
@@ -613,7 +642,7 @@ export default function Editor() {
   const setLegMode = (leg: number, mode: LegMode) =>
     setLegModes((prev) => {
       const next = [...prev];
-      while (next.length < stops.length - 1) next.push('flight');
+      while (next.length < stops.length - 1) next.push('air');
       next[leg] = mode;
       return next;
     });
@@ -677,6 +706,7 @@ export default function Editor() {
           stops={stops}
           legModes={legModes}
           legStatuses={legStatuses}
+          legMetrics={legMetrics}
           onRemove={removeStop}
           onMove={moveStop}
           onSetLegMode={setLegMode}

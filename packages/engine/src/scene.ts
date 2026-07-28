@@ -1,22 +1,53 @@
-import type { CameraState, FrameState, Project } from './types';
+import type {
+  CameraState,
+  FrameState,
+  Project,
+  VehicleState,
+} from './types';
 import { ease } from './easing';
 import { flyInterpolate } from './camera';
 import { titlesAt } from './title';
+import { cumulativeDistances, pointAtProgress } from './geo';
 
 /**
  * Evaluate the full scene at time tMs. Pure function — the single source of
  * truth for preview, in-browser export, and server-side render workers.
  */
 export function sceneAt(project: Project, tMs: number): FrameState {
+  const routeProgress: Record<string, number> = {};
+  const vehicles: Record<string, VehicleState> = {};
+
+  for (const r of project.routes) {
+    const local = (tMs - r.startMs) / Math.max(1, r.endMs - r.startMs);
+    const progress = ease(r.easing ?? 'easeInOutSine', local);
+    routeProgress[r.id] = progress;
+
+    if (r.vehicle && r.coordinates.length >= 2) {
+      const at = pointAtProgress(
+        r.coordinates,
+        cumulativeFor(project, r.id, r.coordinates),
+        progress,
+      );
+      if (at) {
+        vehicles[r.id] = {
+          coordinate: at.coordinate,
+          bearing: at.bearing,
+          icon: r.vehicle.icon,
+          color: r.vehicle.color,
+          size: r.vehicle.size ?? 1,
+          // Fade in as the leg starts and out as it ends, so the vehicle
+          // doesn't pop into existence or sit parked at the destination.
+          opacity: vehicleOpacity(local),
+        };
+      }
+    }
+  }
+
   return {
     camera: cameraAt(project, tMs),
-    routeProgress: Object.fromEntries(
-      project.routes.map((r) => {
-        const local = (tMs - r.startMs) / Math.max(1, r.endMs - r.startMs);
-        return [r.id, ease(r.easing ?? 'easeInOutSine', local)];
-      }),
-    ),
+    routeProgress,
     titles: titlesAt(project.titles ?? [], tMs),
+    vehicles,
     markers: Object.fromEntries(
       project.markers.map((m) => {
         const dur = m.enterDurationMs ?? 400;
@@ -28,6 +59,41 @@ export function sceneAt(project: Project, tMs: number): FrameState {
       }),
     ),
   };
+}
+
+/** Visible only while the leg is in motion, with short fades at each end. */
+function vehicleOpacity(local: number): number {
+  if (local <= 0 || local >= 1) return 0;
+  const FADE = 0.08; // fraction of the leg
+  if (local < FADE) return local / FADE;
+  if (local > 1 - FADE) return (1 - local) / FADE;
+  return 1;
+}
+
+/**
+ * Cumulative distances are pure derived data, but recomputing them for every
+ * frame of every route is wasteful on long imported tracks. Cache per
+ * project object — the cache is keyed by identity, so a recompiled project
+ * gets a fresh one automatically and stale geometry can never be used.
+ */
+const cumulativeCache = new WeakMap<Project, Map<string, number[]>>();
+
+function cumulativeFor(
+  project: Project,
+  routeId: string,
+  coords: readonly [number, number][],
+): number[] {
+  let perProject = cumulativeCache.get(project);
+  if (!perProject) {
+    perProject = new Map();
+    cumulativeCache.set(project, perProject);
+  }
+  let cum = perProject.get(routeId);
+  if (!cum) {
+    cum = cumulativeDistances(coords as [number, number][]);
+    perProject.set(routeId, cum);
+  }
+  return cum;
 }
 
 export function cameraAt(project: Project, tMs: number): CameraState {

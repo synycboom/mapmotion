@@ -35,7 +35,7 @@ const t = (
   blurb,
   stops: places.map(([name, lng, lat]) => ({ name, coordinate: [lng, lat] })),
   legModes:
-    opts.modes ?? places.slice(1).map(() => 'flight' as LegMode),
+    opts.modes ?? places.slice(1).map(() => 'air' as LegMode),
   format: opts.format ?? '16x9',
   styleId: opts.styleId ?? 'liberty',
   speed: opts.speed ?? 1,
@@ -64,7 +64,7 @@ export const TEMPLATES: Template[] = [
       ['Santa Barbara', -119.6982, 34.4208],
       ['Los Angeles', -118.2437, 34.0522],
     ],
-    { modes: ['drive', 'drive', 'drive'], styleId: 'positron', speed: 0.9 },
+    { modes: ['car', 'car', 'car'], styleId: 'positron', speed: 0.9 },
   ),
   t(
     'city-hops',
@@ -88,7 +88,7 @@ export const TEMPLATES: Template[] = [
       ['Kyoto', 135.7681, 35.0116],
       ['Osaka', 135.5023, 34.6937],
     ],
-    { modes: ['drive', 'drive'], format: '9x16', styleId: 'paper', speed: 1.2 },
+    { modes: ['train', 'train'], format: '9x16', styleId: 'paper', speed: 1.2 },
   ),
 ];
 

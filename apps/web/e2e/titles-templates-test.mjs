@@ -71,7 +71,7 @@ await page.waitForTimeout(3000);
 const names = (await page.locator('[data-testid="stop-list"] li').allInnerTexts()).join(' ');
 names.includes('Monterey') ? pass('template stops are correct') : fail('template stops are correct', names.slice(0, 80));
 const legMode = await page.locator('[data-testid="leg-0"]').getAttribute('data-mode');
-legMode === 'drive' ? pass('road-trip sets drive legs') : fail('road-trip sets drive legs', legMode);
+legMode === 'car' ? pass('road-trip sets drive legs') : fail('road-trip sets drive legs', legMode);
 const titleVal = await page.locator('[data-testid="title-input"]').inputValue();
 titleVal === 'Road trip' ? pass('template fills the title card') : fail('template fills the title card', titleVal);
 

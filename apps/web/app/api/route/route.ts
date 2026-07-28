@@ -15,8 +15,14 @@ import { simplifyLine, type LngLat } from '@mapmotion/engine';
  * of a video, never break the editor.
  */
 
-// FOSSGIS community OSRM instance — free, keyless, fair-use.
-const UPSTREAM = 'https://routing.openstreetmap.de/routed-car/route/v1/driving';
+// FOSSGIS community OSRM instances — free, keyless, fair-use. One host per
+// travel profile; the path segment differs, so the profile is validated
+// against this allowlist rather than interpolated from user input.
+const UPSTREAM_BY_PROFILE: Record<string, string> = {
+  car: 'https://routing.openstreetmap.de/routed-car/route/v1/driving',
+  bike: 'https://routing.openstreetmap.de/routed-bike/route/v1/bike',
+  foot: 'https://routing.openstreetmap.de/routed-foot/route/v1/foot',
+};
 const TIMEOUT_MS = 6000;
 const MAX_POINTS = 1200;
 
@@ -34,7 +40,10 @@ export async function GET(req: Request) {
     );
   }
 
-  const base = process.env.ROUTER_URL ?? UPSTREAM;
+  const requested = searchParams.get('profile') ?? 'car';
+  const profile = requested in UPSTREAM_BY_PROFILE ? requested : 'car';
+  // ROUTER_URL overrides every profile (used by tests against a mock).
+  const base = process.env.ROUTER_URL ?? UPSTREAM_BY_PROFILE[profile]!;
   const url =
     `${base}/${from[0]},${from[1]};${to[0]},${to[1]}` +
     `?overview=full&geometries=geojson&alternatives=false&steps=false`;
@@ -75,6 +84,7 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         geometry,
+        profile,
         distanceMeters: json.routes[0]!.distance ?? null,
         durationSeconds: json.routes[0]!.duration ?? null,
         points: geometry.length,

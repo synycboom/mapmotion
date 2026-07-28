@@ -3,6 +3,7 @@ export * from './easing';
 export * from './camera';
 export * from './geo';
 export * from './scene';
+export * from './travel';
 export * from './compile';
 export * from './search';
 export * from './simplify';

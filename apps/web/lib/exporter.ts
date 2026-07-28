@@ -99,6 +99,11 @@ export async function exportVideo(
   const t0 = performance.now();
   const settleCapMs = opts.settleCapMs ?? 900;
 
+  // Vehicle sprites are rasterised on demand; make sure every one this
+  // project needs exists BEFORE the first captured frame, or early frames
+  // would render without their vehicle.
+  await applier.ensureIcons();
+
   // Pre-warm: seek to t=0 and give initial sources/glyphs time to load.
   applier.apply(sceneAt(project, 0));
   await settle(map, Math.max(4000, settleCapMs * 3));

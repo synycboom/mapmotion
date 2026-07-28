@@ -1,14 +1,21 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { LegMode, LngLat, TripStop } from '@mapmotion/engine';
+import { needsRouting, travelMode, type LegMode, type LngLat, type TripStop } from '@mapmotion/engine';
 
 export type LegStatus = 'idle' | 'loading' | 'ok' | 'fallback';
+
+export interface LegMetrics {
+  distanceMeters: number | null;
+  durationSeconds: number | null;
+}
 
 export interface LegRoutes {
   /** Geometry per leg; null means "use an arc". */
   geometries: (LngLat[] | null)[];
   statuses: LegStatus[];
+  /** Router-reported distance/duration per leg, where available. */
+  metrics: (LegMetrics | null)[];
   loading: boolean;
 }
 
@@ -31,6 +38,9 @@ const keyFor = (a: TripStop, b: TripStop) =>
  */
 export function useLegRoutes(stops: TripStop[], modes: LegMode[]): LegRoutes {
   const cache = useRef(new Map<string, LngLat[] | null>());
+  const metrics = useRef(
+    new Map<string, { distanceMeters: number | null; durationSeconds: number | null }>(),
+  );
   const [version, setVersion] = useState(0);
   const [loading, setLoading] = useState(false);
 
@@ -39,11 +49,16 @@ export function useLegRoutes(stops: TripStop[], modes: LegMode[]): LegRoutes {
   // A stable description of what we need, so the effect only re-runs when the
   // actual request set changes.
   const wanted = useMemo(() => {
-    const out: Array<{ i: number; k: string } | null> = [];
+    const out: Array<{ i: number; k: string; profile: string } | null> = [];
     for (let i = 0; i < legCount; i++) {
+      const mode = modes[i];
       out.push(
-        modes[i] === 'drive'
-          ? { i, k: keyFor(stops[i]!, stops[i + 1]!) }
+        mode && needsRouting(mode)
+          ? {
+              i,
+              k: `${travelMode(mode).profile}|${keyFor(stops[i]!, stops[i + 1]!)}`,
+              profile: travelMode(mode).profile ?? 'car',
+            }
           : null,
       );
     }
@@ -56,7 +71,8 @@ export function useLegRoutes(stops: TripStop[], modes: LegMode[]): LegRoutes {
     let cancelled = false;
 
     const missing = wanted.filter(
-      (w): w is { i: number; k: string } => !!w && !cache.current.has(w.k),
+      (w): w is { i: number; k: string; profile: string } =>
+        !!w && !cache.current.has(w.k),
     );
     if (missing.length === 0) {
       setLoading(false);
@@ -66,17 +82,26 @@ export function useLegRoutes(stops: TripStop[], modes: LegMode[]): LegRoutes {
     setLoading(true);
     void (async () => {
       await Promise.all(
-        missing.map(async ({ i, k }) => {
+        missing.map(async ({ i, k, profile }) => {
           const from = stops[i]!;
           const to = stops[i + 1]!;
           try {
             const qs = new URLSearchParams({
               from: `${from.coordinate[0]},${from.coordinate[1]}`,
               to: `${to.coordinate[0]},${to.coordinate[1]}`,
+              profile,
             });
             const res = await fetch(`/api/route?${qs}`);
-            const json = (await res.json()) as { geometry?: LngLat[] | null };
+            const json = (await res.json()) as {
+              geometry?: LngLat[] | null;
+              distanceMeters?: number | null;
+              durationSeconds?: number | null;
+            };
             cache.current.set(k, json.geometry ?? null);
+            metrics.current.set(k, {
+              distanceMeters: json.distanceMeters ?? null,
+              durationSeconds: json.durationSeconds ?? null,
+            });
           } catch {
             cache.current.set(k, null);
           }
@@ -96,20 +121,24 @@ export function useLegRoutes(stops: TripStop[], modes: LegMode[]): LegRoutes {
   return useMemo(() => {
     const geometries: (LngLat[] | null)[] = [];
     const statuses: LegStatus[] = [];
+    const legMetrics: (LegMetrics | null)[] = [];
     for (const w of wanted) {
       if (!w) {
         geometries.push(null);
         statuses.push('idle');
+        legMetrics.push(null);
       } else if (!cache.current.has(w.k)) {
         geometries.push(null);
         statuses.push('loading');
+        legMetrics.push(null);
       } else {
         const g = cache.current.get(w.k)!;
         geometries.push(g);
         statuses.push(g ? 'ok' : 'fallback');
+        legMetrics.push(metrics.current.get(w.k) ?? null);
       }
     }
-    return { geometries, statuses, loading };
+    return { geometries, statuses, metrics: legMetrics, loading };
     // `version` is the signal that the cache contents changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantedSig, version, loading]);

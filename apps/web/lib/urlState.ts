@@ -1,4 +1,4 @@
-import type { LegMode, TripStop } from '@mapmotion/engine';
+import { codeToMode, modeToCode, type LegMode, type TripStop } from '@mapmotion/engine';
 
 /**
  * Project state <-> URL. Lets a map be linked, bookmarked and reloaded with
@@ -61,14 +61,11 @@ export function encodeState(s: UrlState): string {
         .join(STOP_SEP),
     );
   }
-  // Legs encode as a compact flag string, one char per leg:
-  // f=flight, d=drive, t=imported track. Track *geometry* is far too big for
-  // a URL, so a 't' leg reloaded from a link arcs until re-imported.
-  if (s.legModes.some((m) => m !== 'flight')) {
-    params.set(
-      'l',
-      s.legModes.map((m) => (m === 'drive' ? 'd' : m === 'track' ? 't' : 'f')).join(''),
-    );
+  // Legs encode as one character each (see travel.ts for the code map).
+  // Imported-track *geometry* is far too big for a URL, so a 't' leg
+  // reloaded from a link arcs until re-imported.
+  if (s.legModes.some((m) => m !== 'air')) {
+    params.set('l', s.legModes.map(modeToCode).join(''));
   }
   params.set('f', s.format);
   params.set('style', s.styleId);
@@ -105,8 +102,7 @@ export function decodeState(
   const legRaw = p.get('l') ?? '';
   const legModes: LegMode[] = Array.from(
     { length: Math.max(0, stops.length - 1) },
-    (_, i) =>
-      legRaw[i] === 'd' ? 'drive' : legRaw[i] === 't' ? 'track' : 'flight',
+    (_, i) => codeToMode(legRaw[i]),
   );
 
   const f = p.get('f');

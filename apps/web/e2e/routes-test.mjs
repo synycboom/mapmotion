@@ -132,7 +132,7 @@ await withRouter('ok', 3224, 3143, async (port) => {
   };
 
   await page.locator('[data-testid="leg-0"]').waitFor({ timeout: 10_000 });
-  (await page.locator('[data-testid="leg-0"]').getAttribute('data-mode')) === 'flight'
+  (await page.locator('[data-testid="leg-0"]').getAttribute('data-mode')) === 'air'
     ? pass('legs default to flight')
     : fail('legs default to flight');
 
@@ -141,7 +141,7 @@ await withRouter('ok', 3224, 3143, async (port) => {
   arc.n === 97 ? pass('flight leg draws a 97-point arc') : fail('flight leg draws a 97-point arc', `${arc.n} ${arc.why}`);
 
   // Switch to drive.
-  await page.getByRole('button', { name: 'Leg 1 as drive' }).click();
+  await page.getByRole('button', { name: 'Leg 1 as Car' }).click();
   await page.waitForFunction(
     () => document.querySelector('[data-testid="leg-0"]')?.getAttribute('data-status') === 'ok',
     null,
@@ -168,7 +168,7 @@ await withRouter('ok', 3224, 3143, async (port) => {
   page.url().includes('l=d') ? pass('URL encodes leg mode') : fail('URL encodes leg mode', page.url());
   await page.goto(page.url(), { waitUntil: 'load' });
   await page.waitForTimeout(4000);
-  (await page.locator('[data-testid="leg-0"]').getAttribute('data-mode')) === 'drive'
+  (await page.locator('[data-testid="leg-0"]').getAttribute('data-mode')) === 'car'
     ? pass('reload restores drive mode')
     : fail('reload restores drive mode');
 

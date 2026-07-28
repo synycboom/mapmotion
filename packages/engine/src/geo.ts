@@ -55,6 +55,66 @@ export function cumulativeDistances(coords: LngLat[]): number[] {
 }
 
 /**
+ * Initial bearing from a to b, in degrees clockwise from north.
+ * This is what a vehicle sprite is rotated by so it faces its direction of
+ * travel.
+ */
+export function bearingBetween(a: LngLat, b: LngLat): number {
+  const φ1 = a[1] * D2R;
+  const φ2 = b[1] * D2R;
+  const Δλ = (b[0] - a[0]) * D2R;
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x =
+    Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return (Math.atan2(y, x) * R2D + 360) % 360;
+}
+
+/**
+ * Position and heading at `progress` (0..1) along a line.
+ *
+ * Heading is taken from the segment the point currently sits on rather than
+ * from the overall start→end direction, so a vehicle turns as it follows a
+ * winding road instead of pointing at its final destination the whole way.
+ */
+export function pointAtProgress(
+  coords: readonly LngLat[],
+  cumulative: readonly number[],
+  progress: number,
+): { coordinate: LngLat; bearing: number } | null {
+  if (coords.length === 0) return null;
+  if (coords.length === 1) {
+    return { coordinate: [...coords[0]!] as LngLat, bearing: 0 };
+  }
+
+  const total = cumulative[cumulative.length - 1] ?? 0;
+  const p = Math.min(1, Math.max(0, progress));
+
+  if (total === 0) {
+    return {
+      coordinate: [...coords[0]!] as LngLat,
+      bearing: bearingBetween(coords[0]!, coords[coords.length - 1]!),
+    };
+  }
+
+  const target = total * p;
+
+  // Find the segment containing `target`.
+  let i = 1;
+  while (i < cumulative.length - 1 && cumulative[i]! < target) i++;
+
+  const prev = cumulative[i - 1]!;
+  const segLen = cumulative[i]! - prev;
+  const f = segLen === 0 ? 0 : (target - prev) / segLen;
+  const a = coords[i - 1]!;
+  const b = coords[i]!;
+
+  return {
+    coordinate: [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f],
+    bearing: bearingBetween(a, b),
+  };
+}
+
+/**
  * Slice a line from its start to `progress` (0..1 of total length).
  * Returns at least 2 coordinates when progress > 0 (interpolates the tip).
  */

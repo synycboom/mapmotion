@@ -7,6 +7,12 @@ import type {
 import { greatCircleArc, distanceMeters } from './geo';
 import { simplifyLine } from './simplify';
 import { buildTitleCards } from './title';
+import {
+  migrateLegacyMode,
+  travelMode,
+  usesSuppliedGeometry,
+  type TravelMode,
+} from './travel';
 
 export interface TripStop {
   name: string;
@@ -14,17 +20,11 @@ export interface TripStop {
 }
 
 /**
- * How a leg between two stops is drawn.
- *  - 'flight': great-circle arc, computed locally. Always available.
- *  - 'drive':  real road geometry from a routing service. Falls back to
- *              'flight' whenever geometry is missing, so a routing outage
- *              degrades the look rather than breaking the animation.
- *  - 'track':  geometry from an imported GPX/KML file.
- *
- * 'drive' and 'track' both animate supplied geometry; they differ only in
- * where it came from, which matters for the UI and for whether we re-fetch.
+ * How a leg between two stops is travelled. See travel.ts for the full set.
+ * `LegMode` is kept as an alias because saved projects and shared URLs refer
+ * to it; legacy values ('flight' | 'drive' | 'track') migrate on read.
  */
-export type LegMode = 'flight' | 'drive' | 'track';
+export type LegMode = TravelMode;
 
 export interface TripOptions {
   format?: Partial<ProjectFormat>;
@@ -36,7 +36,14 @@ export interface TripOptions {
   legMs?: number;
   routeColor?: string;
   /** Per-leg mode; index i describes stops[i] -> stops[i+1]. */
-  legModes?: readonly LegMode[];
+  legModes?: readonly (LegMode | string)[];
+  /** Per-leg vehicle colour; falls back to the route colour. */
+  legColors?: readonly (string | null | undefined)[];
+  /** Draw a vehicle riding along each leg. Default true. */
+  showVehicles?: boolean;
+  /** Router-reported distance/duration per leg, for on-screen labels. */
+  legDistances?: readonly (number | null | undefined)[];
+  legDurations2?: readonly (number | null | undefined)[];
   /**
    * Resolved road geometry per leg, when a router has supplied it.
    * `null`/absent means "not available" and the leg falls back to an arc.
@@ -98,12 +105,19 @@ export function compileTrip(
     const legIndex = i - 1;
 
     const supplied = opts.legGeometries?.[legIndex];
-    const mode = opts.legModes?.[legIndex];
-    const usesGeometry = mode === 'drive' || mode === 'track';
-    const coordinates =
-      usesGeometry && supplied && supplied.length >= 2
-        ? simplifyLine(supplied, opts.simplifyTolerance)
-        : greatCircleArc(from.coordinate, to.coordinate, 96);
+    const mode = migrateLegacyMode(opts.legModes?.[legIndex] as string | undefined);
+    const spec = travelMode(mode);
+
+    let coordinates: LngLat[];
+    if (usesSuppliedGeometry(mode) && supplied && supplied.length >= 2) {
+      coordinates = simplifyLine(supplied, opts.simplifyTolerance);
+    } else if (spec.path === 'straight') {
+      coordinates = [[...from.coordinate], [...to.coordinate]];
+    } else {
+      // Arc is the fallback for every mode: a router outage or a missing
+      // import degrades the look, never the animation.
+      coordinates = greatCircleArc(from.coordinate, to.coordinate, 96);
+    }
 
     // Longer legs get a bit more time (log-scaled, clamped) unless the user
     // has retimed this segment in Studio mode.
@@ -115,14 +129,22 @@ export function compileTrip(
 
     camera.push({ tMs: t, camera: cam(from.coordinate, stopZoom), easing: 'easeInOutCubic' });
 
+    const color = opts.legColors?.[legIndex] ?? opts.routeColor ?? '#e8590c';
     routes.push({
       id: `route-${i}`,
-      coordinates: coordinates as LngLat[],
+      coordinates,
+      mode,
       startMs: t,
       endMs: t + legMs,
       easing: 'easeInOutSine',
-      color: opts.routeColor ?? '#e8590c',
+      color,
       widthPx: 4,
+      distanceMeters: opts.legDistances?.[legIndex] ?? undefined,
+      durationSeconds: opts.legDurations2?.[legIndex] ?? undefined,
+      vehicle:
+        opts.showVehicles === false || spec.icon === 'dot'
+          ? undefined
+          : { icon: spec.icon, color, size: 1 },
     });
 
     t += legMs;

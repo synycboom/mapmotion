@@ -128,7 +128,7 @@ await page.waitForTimeout(2500);
   ? pass('loading restores the title')
   : fail('loading restores the title');
 const mode = await page.locator('[data-testid="leg-0"]').getAttribute('data-mode');
-mode === 'track' ? pass('loading restores track mode') : fail('loading restores track mode', mode);
+mode === 'file' ? pass('loading restores track mode') : fail('loading restores track mode', mode);
 
 const restoredPoints = await drawnPoints();
 restoredPoints === importedPoints && restoredPoints > 2

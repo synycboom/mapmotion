@@ -85,7 +85,7 @@ await page.waitForTimeout(2500);
 (await stopCount()) === 2 ? pass('GPX track collapses to start + finish stops') : fail('GPX track collapses to start + finish stops', await stopCount());
 
 const mode = await page.locator('[data-testid="leg-0"]').getAttribute('data-mode');
-mode === 'track' ? pass('imported leg uses track mode') : fail('imported leg uses track mode', mode);
+mode === 'file' ? pass('imported leg uses track mode') : fail('imported leg uses track mode', mode);
 
 const status = await page.locator('[data-testid="leg-0"]').getAttribute('data-status');
 status === 'ok' ? pass('imported leg has geometry') : fail('imported leg has geometry', status);
@@ -112,7 +112,7 @@ await page.waitForTimeout(2500);
 const names = await page.locator('[data-testid="stop-list"] li').allInnerTexts();
 names.join(' ').includes('Louvre') ? pass('waypoint names are kept') : fail('waypoint names are kept', names.join('|'));
 const kmlMode = await page.locator('[data-testid="leg-0"]').getAttribute('data-mode');
-kmlMode === 'flight' ? pass('waypoint legs default to flight') : fail('waypoint legs default to flight', kmlMode);
+kmlMode === 'air' ? pass('waypoint legs default to flight') : fail('waypoint legs default to flight', kmlMode);
 
 console.log('\n[import] bad file');
 await page.locator('[data-testid="track-file-input"]').setInputFiles('/tmp/mm-fixtures/notes.txt');
