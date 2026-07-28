@@ -1,0 +1,9 @@
+node_modules/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+apps/web/public/countries.geojson
+.env*
+!.env.example
+.DS_Store
+/tmp

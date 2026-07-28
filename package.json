@@ -1,0 +1,14 @@
+{
+  "name": "mapmotion",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "npm run test -w @mapmotion/engine",
+    "build": "npm run build -w web",
+    "dev": "npm run dev -w web",
+    "e2e": "node apps/web/e2e/export-test.mjs"
+  }
+}
