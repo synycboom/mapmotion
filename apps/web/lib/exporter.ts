@@ -16,6 +16,10 @@ export interface ExportResult {
 
 export interface ExportOptions {
   watermark?: string;
+  /** Attribution line composited into every frame (OSM license requires it). */
+  attribution?: string;
+  /** Per-frame settle budget; remote-tile styles need more than local GeoJSON. */
+  settleCapMs?: number;
   onProgress?: (done: number, total: number) => void;
   signal?: AbortSignal;
 }
@@ -92,10 +96,11 @@ export async function exportVideo(
 
   const mapCanvas = map.getCanvas();
   const t0 = performance.now();
+  const settleCapMs = opts.settleCapMs ?? 900;
 
   // Pre-warm: seek to t=0 and give initial sources/glyphs time to load.
   applier.apply(sceneAt(project, 0));
-  await settle(map, 4000);
+  await settle(map, Math.max(4000, settleCapMs * 3));
 
   for (let i = 0; i < totalFrames; i++) {
     if (opts.signal?.aborted) throw new Error('export aborted');
@@ -103,10 +108,10 @@ export async function exportVideo(
 
     const tMs = (i / fps) * 1000;
     applier.apply(sceneAt(project, tMs));
-    await settle(map, 900);
+    await settle(map, settleCapMs);
 
     ctx.drawImage(mapCanvas, 0, 0, width, height);
-    drawOverlays(ctx, width, height, opts.watermark);
+    drawOverlays(ctx, width, height, opts.watermark, opts.attribution);
 
     const frame = new VideoFrame(canvas, {
       timestamp: Math.round((i * 1e6) / fps),
@@ -199,15 +204,21 @@ function drawOverlays(
   width: number,
   height: number,
   watermark?: string,
+  attribution?: string,
 ) {
   const pad = Math.round(width * 0.012);
   ctx.save();
   // Attribution (kept on all tiers — data licensing).
   ctx.font = `${Math.max(11, Math.round(width / 160))}px sans-serif`;
   ctx.textBaseline = 'bottom';
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.textAlign = 'left';
-  ctx.fillText('Data: Natural Earth', pad, height - pad);
+  const attr = attribution ?? 'Data: Natural Earth';
+  const y = height - pad;
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = 3;
+  ctx.strokeText(attr, pad, y);
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.fillText(attr, pad, y);
 
   if (watermark) {
     ctx.textAlign = 'right';

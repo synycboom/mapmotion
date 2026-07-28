@@ -11,6 +11,18 @@ import {
  * engine owns ALL interpolation — this is what makes preview and export
  * pixel-identical.
  */
+export interface MarkerTheme {
+  font: string;
+  textColor: string;
+  haloColor: string;
+}
+
+const DEFAULT_THEME: MarkerTheme = {
+  font: 'Noto Sans Regular',
+  textColor: '#ffffff',
+  haloColor: '#0e1726',
+};
+
 export class FrameApplier {
   private cumulative = new Map<string, number[]>();
 
@@ -23,8 +35,12 @@ export class FrameApplier {
     }
   }
 
-  /** Add route/marker sources+layers. Call once after style load. */
-  install(): void {
+  /**
+   * Add route/marker sources+layers. Call after every style load —
+   * `setStyle` wipes all custom sources/layers, so the editor re-installs
+   * on each style switch.
+   */
+  install(theme: MarkerTheme = DEFAULT_THEME): void {
     const map = this.map;
 
     for (const r of this.project.routes) {
@@ -89,7 +105,7 @@ export class FrameApplier {
       source: 'markers',
       layout: {
         'text-field': ['get', 'label'],
-        'text-font': ['Noto Sans Regular'],
+        'text-font': [theme.font],
         'text-size': 15,
         'text-offset': [0, 1.3],
         'text-anchor': 'top',
@@ -97,8 +113,8 @@ export class FrameApplier {
         'text-ignore-placement': true,
       },
       paint: {
-        'text-color': '#ffffff',
-        'text-halo-color': '#0e1726',
+        'text-color': theme.textColor,
+        'text-halo-color': theme.haloColor,
         'text-halo-width': 1.4,
         'text-opacity': ['coalesce', ['feature-state', 'opacity'], 0],
       },

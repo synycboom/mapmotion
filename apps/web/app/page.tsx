@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { compileTrip, sceneAt, type Project } from '@mapmotion/engine';
-import { buildStyle } from '../lib/mapStyle';
 import { FrameApplier } from '../lib/applyFrame';
 import { exportVideo, type ExportResult } from '../lib/exporter';
+import { STYLES, getStyle, type StyleDef } from '../lib/styles';
 
 declare global {
   interface Window {
@@ -23,6 +23,8 @@ declare global {
     __exportB64?: string;
   }
 }
+
+const EMPTY_STYLE = { version: 8 as const, sources: {}, layers: [] };
 
 function demoProject(small: boolean): Project {
   const stops = [
@@ -45,11 +47,15 @@ export default function Editor() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const applierRef = useRef<FrameApplier | null>(null);
   const projectRef = useRef<Project | null>(null);
+  const styleRef = useRef<StyleDef>(getStyle('liberty'));
   const playingRef = useRef(false);
   const playheadRef = useRef(0);
   const rafRef = useRef(0);
+  const autotestRanRef = useRef(false);
 
   const [ready, setReady] = useState(false);
+  const [styleId, setStyleId] = useState(styleRef.current.id);
+  const [styleLoading, setStyleLoading] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [playheadMs, setPlayheadMs] = useState(0);
   const [exporting, setExporting] = useState(false);
@@ -65,9 +71,17 @@ export default function Editor() {
     const project = demoProject(autotest && !params.has('hd'));
     projectRef.current = project;
 
+    // Autotest defaults to the offline Minimal style (deterministic CI);
+    // interactive sessions default to Liberty (real OSM basemap).
+    const initialStyle = getStyle(
+      params.get('style') ?? (autotest ? 'minimal' : 'liberty'),
+    );
+    styleRef.current = initialStyle;
+    setStyleId(initialStyle.id);
+
     const map = new maplibregl.Map({
       container: containerRef.current!,
-      style: buildStyle(),
+      style: EMPTY_STYLE,
       center: project.camera[0]!.camera.center,
       zoom: project.camera[0]!.camera.zoom,
       interactive: false,
@@ -77,48 +91,40 @@ export default function Editor() {
     });
     mapRef.current = map;
 
+    // Re-install our route/marker layers after EVERY style load (setStyle
+    // wipes custom sources/layers).
+    map.on('style.load', () => {
+      const style = map.getStyle();
+      if (!style || style.layers.length === 0) return; // skip the empty boot style
+      const s = styleRef.current;
+      const applier = applierRef.current ?? new FrameApplier(map, project);
+      applierRef.current = applier;
+      applier.install({
+        font: s.markerFont,
+        textColor: s.markerTextColor,
+        haloColor: s.markerHaloColor,
+      });
+      applier.apply(sceneAt(project, playheadRef.current));
+      setStyleLoading(false);
+      setReady(true);
+
+      if (autotest && !autotestRanRef.current) {
+        autotestRanRef.current = true;
+        void runAutotest(map, applier, project);
+      }
+    });
+
+    Promise.resolve(initialStyle.resolve())
+      .then((resolved) => map.setStyle(resolved as never))
+      .catch((e) => setError(`Style failed to load: ${e}`));
+
     const fit = () => {
       const vw = window.innerWidth - 48;
-      const vh = window.innerHeight - 210;
+      const vh = window.innerHeight - 230;
       setScale(Math.min(vw / project.format.width, vh / project.format.height, 1));
     };
     fit();
     window.addEventListener('resize', fit);
-
-    map.on('load', async () => {
-      const applier = new FrameApplier(map, project);
-      applier.install();
-      applier.apply(sceneAt(project, 0));
-      applierRef.current = applier;
-      setReady(true);
-
-      if (autotest) {
-        try {
-          const res = await exportVideo(map, applier, project, {
-            watermark: 'MAPMOTION',
-          });
-          const buf = new Uint8Array(await res.blob.arrayBuffer());
-          let bin = '';
-          const CHUNK = 0x8000;
-          for (let i = 0; i < buf.length; i += CHUNK) {
-            bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
-          }
-          window.__exportB64 = btoa(bin);
-          window.__exportResult = {
-            ok: true,
-            codec: res.codec,
-            ext: res.ext,
-            frames: res.frames,
-            wallMs: Math.round(res.wallMs),
-            msPerFrame: Math.round(res.msPerFrame * 10) / 10,
-            realtimeFactor: Math.round(res.realtimeFactor * 100) / 100,
-            bytes: res.blob.size,
-          };
-        } catch (e) {
-          window.__exportResult = { ok: false, error: String(e) };
-        }
-      }
-    });
 
     return () => {
       window.removeEventListener('resize', fit);
@@ -127,6 +133,57 @@ export default function Editor() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const runAutotest = async (
+    map: maplibregl.Map,
+    applier: FrameApplier,
+    project: Project,
+  ) => {
+    try {
+      const s = styleRef.current;
+      const res = await exportVideo(map, applier, project, {
+        watermark: 'MAPMOTION',
+        attribution: s.attribution,
+        settleCapMs: s.settleCapMs,
+      });
+      const buf = new Uint8Array(await res.blob.arrayBuffer());
+      let bin = '';
+      const CHUNK = 0x8000;
+      for (let i = 0; i < buf.length; i += CHUNK) {
+        bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+      }
+      window.__exportB64 = btoa(bin);
+      window.__exportResult = {
+        ok: true,
+        codec: res.codec,
+        ext: res.ext,
+        frames: res.frames,
+        wallMs: Math.round(res.wallMs),
+        msPerFrame: Math.round(res.msPerFrame * 10) / 10,
+        realtimeFactor: Math.round(res.realtimeFactor * 100) / 100,
+        bytes: res.blob.size,
+      };
+    } catch (e) {
+      window.__exportResult = { ok: false, error: String(e) };
+    }
+  };
+
+  const switchStyle = async (id: string) => {
+    const map = mapRef.current;
+    if (!map || exporting) return;
+    const def = getStyle(id);
+    styleRef.current = def;
+    setStyleId(def.id);
+    setStyleLoading(true);
+    setError(null);
+    try {
+      const resolved = await def.resolve();
+      map.setStyle(resolved as never); // 'style.load' handler re-installs layers
+    } catch (e) {
+      setStyleLoading(false);
+      setError(`Style "${def.label}" failed to load: ${e}`);
+    }
+  };
 
   const seek = (tMs: number) => {
     const project = projectRef.current;
@@ -181,8 +238,11 @@ export default function Editor() {
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
     setDownloadUrl(null);
     try {
+      const s = styleRef.current;
       const res = await exportVideo(map, applier, project, {
         watermark: 'MAPMOTION',
+        attribution: s.attribution,
+        settleCapMs: s.settleCapMs,
         onProgress: (done, total) => setProgress(done / total),
       });
       setResult(res);
@@ -203,12 +263,13 @@ export default function Editor() {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
         <h1 style={{ margin: 0, fontSize: 18 }}>Mapmotion</h1>
         <span style={{ opacity: 0.55, fontSize: 13 }}>
-          Phase 0 spike — deterministic engine → MapLibre → WebCodecs
+          Phase 1 — real basemaps (OpenFreeMap · Protomaps-style recipe)
         </span>
       </div>
 
       <div
         style={{
+          position: 'relative',
           width: (project?.format.width ?? 1280) * scale,
           height: (project?.format.height ?? 720) * scale,
           overflow: 'hidden',
@@ -225,9 +286,48 @@ export default function Editor() {
             transformOrigin: 'top left',
           }}
         />
+        <div
+          style={{
+            position: 'absolute',
+            left: 6,
+            bottom: 4,
+            fontSize: 10,
+            color: '#fff',
+            textShadow: '0 0 3px rgba(0,0,0,0.9)',
+            pointerEvents: 'none',
+          }}
+        >
+          {styleRef.current.attribution}
+        </div>
+        {styleLoading && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'grid',
+              placeItems: 'center',
+              background: 'rgba(9,15,26,0.55)',
+              fontSize: 14,
+            }}
+          >
+            Loading style…
+          </div>
+        )}
       </div>
 
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 14, maxWidth: 900 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 14, maxWidth: 940 }}>
+        <select
+          value={styleId}
+          onChange={(e) => void switchStyle(e.target.value)}
+          disabled={exporting}
+          style={{ ...btn, padding: '8px 10px' }}
+        >
+          {STYLES.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label}
+            </option>
+          ))}
+        </select>
         <button onClick={togglePlay} disabled={!ready || exporting} style={btn}>
           {playing ? 'Pause' : 'Play'}
         </button>
@@ -252,7 +352,7 @@ export default function Editor() {
       </div>
 
       {error && (
-        <p style={{ color: '#ff8787', fontSize: 13 }}>Export failed: {error}</p>
+        <p style={{ color: '#ff8787', fontSize: 13 }}>{error}</p>
       )}
       {result && downloadUrl && (
         <p style={{ fontSize: 13, opacity: 0.85 }}>
