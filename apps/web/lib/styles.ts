@@ -85,6 +85,24 @@ export function getStyle(id: string | null | undefined): StyleDef {
 }
 
 /**
+ * Wrap an arbitrary style URL as a StyleDef (dev/testing: `?styleUrl=...`).
+ * Lets us point the editor at a local stand-in server when the real tile
+ * host is unreachable.
+ */
+export function customStyle(url: string): StyleDef {
+  return {
+    id: 'custom',
+    label: 'Custom URL',
+    attribution: 'Custom style',
+    settleCapMs: 3000,
+    markerFont: 'Noto Sans Regular',
+    markerTextColor: '#1a1a2e',
+    markerHaloColor: '#ffffff',
+    resolve: () => url,
+  };
+}
+
+/**
  * "Paper" — our signature look, following the PamPam recipe: a light OSM
  * basemap recolored (cream land, bold ink-blue water, quiet roads) with
  * subtle terrain hillshading from the free AWS terrarium elevation tiles.

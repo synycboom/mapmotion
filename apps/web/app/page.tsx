@@ -5,7 +5,7 @@ import maplibregl from 'maplibre-gl';
 import { compileTrip, sceneAt, type Project } from '@mapmotion/engine';
 import { FrameApplier } from '../lib/applyFrame';
 import { exportVideo, type ExportResult } from '../lib/exporter';
-import { STYLES, getStyle, type StyleDef } from '../lib/styles';
+import { STYLES, getStyle, customStyle, type StyleDef } from '../lib/styles';
 
 declare global {
   interface Window {
@@ -55,6 +55,8 @@ export default function Editor() {
 
   const [ready, setReady] = useState(false);
   const [styleId, setStyleId] = useState(styleRef.current.id);
+  /** Populated when ?styleUrl= is used, so the picker can show it. */
+  const [extraStyle, setExtraStyle] = useState<StyleDef | null>(null);
   const [styleLoading, setStyleLoading] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [playheadMs, setPlayheadMs] = useState(0);
@@ -90,11 +92,14 @@ export default function Editor() {
     const project = demoProject(autotest && !params.has('hd'));
     projectRef.current = project;
 
-    // Autotest defaults to the offline Minimal style (deterministic CI);
+    // ?styleUrl= loads an arbitrary style (dev/testing). Otherwise autotest
+    // defaults to the offline Minimal style (deterministic CI) and
     // interactive sessions default to Liberty (real OSM basemap).
-    const initialStyle = getStyle(
-      params.get('style') ?? (autotest ? 'minimal' : 'liberty'),
-    );
+    const styleUrlParam = params.get('styleUrl');
+    const initialStyle = styleUrlParam
+      ? customStyle(styleUrlParam)
+      : getStyle(params.get('style') ?? (autotest ? 'minimal' : 'liberty'));
+    if (styleUrlParam) setExtraStyle(initialStyle);
     styleRef.current = initialStyle;
     setStyleId(initialStyle.id);
 
@@ -226,7 +231,7 @@ export default function Editor() {
   const switchStyle = async (id: string) => {
     const map = mapRef.current;
     if (!map || exporting) return;
-    const def = getStyle(id);
+    const def = extraStyle && id === extraStyle.id ? extraStyle : getStyle(id);
     styleRef.current = def;
     setStyleId(def.id);
     setStyleLoading(true);
@@ -382,7 +387,7 @@ export default function Editor() {
           disabled={exporting}
           style={{ ...btn, padding: '8px 10px' }}
         >
-          {STYLES.map((s) => (
+          {(extraStyle ? [extraStyle, ...STYLES] : STYLES).map((s) => (
             <option key={s.id} value={s.id}>
               {s.label}
             </option>
