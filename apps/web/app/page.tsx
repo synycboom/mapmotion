@@ -21,10 +21,10 @@ declare global {
       bytes?: number;
     };
     __exportB64?: string;
+    __map?: maplibregl.Map;
+    __mmDiag?: () => Record<string, unknown>;
   }
 }
-
-const EMPTY_STYLE = { version: 8 as const, sources: {}, layers: [] };
 
 function demoProject(small: boolean): Project {
   const stops = [
@@ -63,9 +63,28 @@ export default function Editor() {
   const [result, setResult] = useState<ExportResult | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mapErrors, setMapErrors] = useState<string[]>([]);
   const [scale, setScale] = useState(0.5);
 
+  /** Install our layers for the current style and paint the current frame. */
+  const installAndPaint = (map: maplibregl.Map, project: Project) => {
+    const s = styleRef.current;
+    const applier = applierRef.current ?? new FrameApplier(map, project);
+    applierRef.current = applier;
+    try {
+      applier.install({
+        font: s.markerFont,
+        textColor: s.markerTextColor,
+        haloColor: s.markerHaloColor,
+      });
+      applier.apply(sceneAt(project, playheadRef.current));
+    } catch (e) {
+      setError(`Layer install failed: ${e}`);
+    }
+  };
+
   useEffect(() => {
+    let disposed = false;
     const params = new URLSearchParams(location.search);
     const autotest = params.has('autotest');
     const project = demoProject(autotest && !params.has('hd'));
@@ -79,57 +98,93 @@ export default function Editor() {
     styleRef.current = initialStyle;
     setStyleId(initialStyle.id);
 
-    const map = new maplibregl.Map({
-      container: containerRef.current!,
-      style: EMPTY_STYLE,
-      center: project.camera[0]!.camera.center,
-      zoom: project.camera[0]!.camera.zoom,
-      interactive: false,
-      attributionControl: false,
-      pixelRatio: 1, // canvas backing == format resolution, exactly
-      fadeDuration: 0, // no tile/label fade — deterministic frames
-    });
-    mapRef.current = map;
-
-    // Re-install our route/marker layers after EVERY style load (setStyle
-    // wipes custom sources/layers).
-    map.on('style.load', () => {
-      const style = map.getStyle();
-      if (!style || style.layers.length === 0) return; // skip the empty boot style
-      const s = styleRef.current;
-      const applier = applierRef.current ?? new FrameApplier(map, project);
-      applierRef.current = applier;
-      applier.install({
-        font: s.markerFont,
-        textColor: s.markerTextColor,
-        haloColor: s.markerHaloColor,
-      });
-      applier.apply(sceneAt(project, playheadRef.current));
-      setStyleLoading(false);
-      setReady(true);
-
-      if (autotest && !autotestRanRef.current) {
-        autotestRanRef.current = true;
-        void runAutotest(map, applier, project);
-      }
-    });
-
-    Promise.resolve(initialStyle.resolve())
-      .then((resolved) => map.setStyle(resolved as never))
-      .catch((e) => setError(`Style failed to load: ${e}`));
-
     const fit = () => {
       const vw = window.innerWidth - 48;
-      const vh = window.innerHeight - 230;
+      const vh = window.innerHeight - 250;
       setScale(Math.min(vw / project.format.width, vh / project.format.height, 1));
     };
     fit();
     window.addEventListener('resize', fit);
 
+    // Resolve the style BEFORE constructing the Map. Constructing with a
+    // placeholder and calling setStyle() later races the initial style load
+    // ("Unable to perform style diff: Style is not done loading") and can
+    // leave vector sources half-initialized — background paints but tiles
+    // never render.
+    void (async () => {
+      let resolved: string | maplibregl.StyleSpecification;
+      try {
+        resolved = (await initialStyle.resolve()) as string | maplibregl.StyleSpecification;
+      } catch (e) {
+        setError(`Style "${initialStyle.label}" failed to load: ${e}`);
+        setStyleLoading(false);
+        return;
+      }
+      if (disposed || !containerRef.current) return;
+
+      const map = new maplibregl.Map({
+        container: containerRef.current,
+        style: resolved as never,
+        center: project.camera[0]!.camera.center,
+        zoom: project.camera[0]!.camera.zoom,
+        interactive: false,
+        attributionControl: false,
+        pixelRatio: 1, // canvas backing == format resolution, exactly
+        fadeDuration: 0, // no tile/label fade — deterministic frames
+      });
+      mapRef.current = map;
+      window.__map = map;
+
+      map.on('error', (e) => {
+        const msg = (e as { error?: Error }).error?.message ?? String(e);
+        console.error('[mm-map-error]', msg);
+        setMapErrors((prev) => (prev.includes(msg) ? prev : [...prev, msg].slice(-5)));
+      });
+
+      // Re-install our route/marker layers after EVERY style load —
+      // setStyle() wipes custom sources and layers.
+      map.on('style.load', () => {
+        installAndPaint(map, project);
+        setStyleLoading(false);
+        setReady(true);
+      });
+
+      map.once('load', () => {
+        if (autotest && !autotestRanRef.current) {
+          autotestRanRef.current = true;
+          void runAutotest(map, applierRef.current!, project);
+        }
+      });
+
+      window.__mmDiag = () => {
+        const style = map.getStyle();
+        const src = map.getSource('openmaptiles') as
+          | { tiles?: string[]; url?: string }
+          | undefined;
+        return {
+          styleName: style?.name,
+          layerCount: style?.layers.length,
+          sources: Object.keys(style?.sources ?? {}),
+          openmaptiles: src ? { url: src.url, tiles: src.tiles } : 'absent',
+          styleLoaded: map.isStyleLoaded(),
+          areTilesLoaded: map.areTilesLoaded(),
+          canvas: { w: map.getCanvas().width, h: map.getCanvas().height },
+          camera: {
+            center: map.getCenter().toArray(),
+            zoom: map.getZoom(),
+            bearing: map.getBearing(),
+            pitch: map.getPitch(),
+          },
+        };
+      };
+    })();
+
     return () => {
+      disposed = true;
       window.removeEventListener('resize', fit);
       cancelAnimationFrame(rafRef.current);
-      map.remove();
+      mapRef.current?.remove();
+      mapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -176,9 +231,14 @@ export default function Editor() {
     setStyleId(def.id);
     setStyleLoading(true);
     setError(null);
+    setMapErrors([]);
     try {
       const resolved = await def.resolve();
-      map.setStyle(resolved as never); // 'style.load' handler re-installs layers
+      // Don't setStyle mid-load — that forces a from-scratch rebuild.
+      if (!map.isStyleLoaded()) {
+        await new Promise<void>((r) => map.once('idle', () => r()));
+      }
+      map.setStyle(resolved as never); // 'style.load' re-installs our layers
     } catch (e) {
       setStyleLoading(false);
       setError(`Style "${def.label}" failed to load: ${e}`);
@@ -263,7 +323,7 @@ export default function Editor() {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
         <h1 style={{ margin: 0, fontSize: 18 }}>Mapmotion</h1>
         <span style={{ opacity: 0.55, fontSize: 13 }}>
-          Phase 1 — real basemaps (OpenFreeMap · Protomaps-style recipe)
+          Phase 1 — real basemaps (OpenFreeMap)
         </span>
       </div>
 
@@ -351,8 +411,16 @@ export default function Editor() {
         </button>
       </div>
 
-      {error && (
-        <p style={{ color: '#ff8787', fontSize: 13 }}>{error}</p>
+      {error && <p style={{ color: '#ff8787', fontSize: 13 }}>{error}</p>}
+      {mapErrors.length > 0 && (
+        <div style={{ color: '#ffa8a8', fontSize: 12, marginTop: 4 }}>
+          Map errors:
+          <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+            {mapErrors.map((m, i) => (
+              <li key={i}>{m}</li>
+            ))}
+          </ul>
+        </div>
       )}
       {result && downloadUrl && (
         <p style={{ fontSize: 13, opacity: 0.85 }}>
