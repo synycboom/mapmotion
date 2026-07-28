@@ -18,8 +18,12 @@ export interface TripStop {
  *  - 'drive':  real road geometry from a routing service. Falls back to
  *              'flight' whenever geometry is missing, so a routing outage
  *              degrades the look rather than breaking the animation.
+ *  - 'track':  geometry from an imported GPX/KML file.
+ *
+ * 'drive' and 'track' both animate supplied geometry; they differ only in
+ * where it came from, which matters for the UI and for whether we re-fetch.
  */
-export type LegMode = 'flight' | 'drive';
+export type LegMode = 'flight' | 'drive' | 'track';
 
 export interface TripOptions {
   format?: Partial<ProjectFormat>;
@@ -75,9 +79,10 @@ export function compileTrip(
     const legIndex = i - 1;
 
     const supplied = opts.legGeometries?.[legIndex];
-    const wantsDrive = opts.legModes?.[legIndex] === 'drive';
+    const mode = opts.legModes?.[legIndex];
+    const usesGeometry = mode === 'drive' || mode === 'track';
     const coordinates =
-      wantsDrive && supplied && supplied.length >= 2
+      usesGeometry && supplied && supplied.length >= 2
         ? simplifyLine(supplied, opts.simplifyTolerance)
         : greatCircleArc(from.coordinate, to.coordinate, 96);
 

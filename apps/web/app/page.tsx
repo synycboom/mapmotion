@@ -5,7 +5,9 @@ import maplibregl from 'maplibre-gl';
 import {
   compileTrip,
   sceneAt,
+  type ImportedTrack,
   type LegMode,
+  type LngLat,
   type PlaceHit,
   type Project,
   type TripStop,
@@ -23,6 +25,7 @@ import {
 import { PlaceSearch } from '../components/PlaceSearch';
 import { StopList } from '../components/StopList';
 import { useLegRoutes } from '../lib/useLegRoutes';
+import { TrackImport } from '../components/TrackImport';
 
 declare global {
   interface Window {
@@ -53,6 +56,11 @@ export default function Editor() {
   const [booted, setBooted] = useState(false);
   const [stops, setStops] = useState<TripStop[]>(DEFAULT_STOPS);
   const [legModes, setLegModes] = useState<LegMode[]>(['flight', 'flight']);
+  // Geometry from imported GPX/KML, parallel to legs. Too large for the URL,
+  // so an imported leg that is reloaded from a link falls back to an arc
+  // until the file is re-imported (or the project is loaded from the
+  // library, which does persist geometry).
+  const [trackGeometries, setTrackGeometries] = useState<(LngLat[] | null)[]>([]);
   const [format, setFormat] = useState<FormatId>('16x9');
   const [speed, setSpeed] = useState(1);
   const [res, setRes] = useState(1);
@@ -74,9 +82,30 @@ export default function Editor() {
 
   // Road geometry for any leg set to 'drive'. Missing/failed lookups come
   // back as null and compileTrip arcs instead.
-  const { geometries: legGeometries, statuses: legStatuses } = useLegRoutes(
+  const { geometries: routedGeometries, statuses: routeStatuses } = useLegRoutes(
     stops,
     legModes,
+  );
+
+  // One geometry list for the compiler: imported tracks win on 'track' legs,
+  // routed roads on 'drive' legs, nothing (arc) otherwise.
+  const legGeometries = useMemo(
+    () =>
+      Array.from({ length: Math.max(0, stops.length - 1) }, (_, i) =>
+        legModes[i] === 'track'
+          ? trackGeometries[i] ?? null
+          : routedGeometries[i] ?? null,
+      ),
+    [stops.length, legModes, trackGeometries, routedGeometries],
+  );
+
+  const legStatuses = useMemo(
+    () =>
+      Array.from({ length: Math.max(0, stops.length - 1) }, (_, i) => {
+        if (legModes[i] !== 'track') return routeStatuses[i] ?? 'idle';
+        return trackGeometries[i]?.length ? 'ok' : 'fallback';
+      }),
+    [stops.length, legModes, trackGeometries, routeStatuses],
   );
 
   /** The compiled scene — recomputed whenever the inputs change. */
@@ -394,13 +423,16 @@ export default function Editor() {
   const addStop = (hit: PlaceHit) => {
     setStops((prev) => [...prev, { name: hit.name, coordinate: hit.coordinate }]);
     setLegModes((prev) => [...prev, 'flight']);
+    setTrackGeometries((prev) => [...prev, null]);
   };
 
   const removeStop = (i: number) => {
     setStops((prev) => prev.filter((_, j) => j !== i));
     // Dropping a stop removes the leg that led into it (or out of it, for
     // the first stop).
-    setLegModes((prev) => prev.filter((_, j) => j !== Math.max(0, i - 1)));
+    const leg = Math.max(0, i - 1);
+    setLegModes((prev) => prev.filter((_, j) => j !== leg));
+    setTrackGeometries((prev) => prev.filter((_, j) => j !== leg));
   };
 
   const moveStop = (i: number, dir: -1 | 1) => {
@@ -414,13 +446,45 @@ export default function Editor() {
     // Reordering changes which places each leg connects, so modes no longer
     // describe the same journey. Reset the two touched legs to flight rather
     // than silently keeping a 'drive' that now spans an ocean.
+    const touched = [Math.min(i, j) - 1, Math.min(i, j)];
     setLegModes((prev) => {
       const next = [...prev];
-      for (const leg of [Math.min(i, j) - 1, Math.min(i, j)]) {
+      for (const leg of touched) {
         if (leg >= 0 && leg < next.length) next[leg] = 'flight';
       }
       return next;
     });
+    setTrackGeometries((prev) => {
+      const next = [...prev];
+      for (const leg of touched) {
+        if (leg >= 0 && leg < next.length) next[leg] = null;
+      }
+      return next;
+    });
+  };
+
+  /**
+   * Importing replaces the trip: the file's own path becomes a single leg
+   * between its endpoints. Files that carry only waypoints (no track) become
+   * ordinary stops instead.
+   */
+  const importGpx = (t: ImportedTrack) => {
+    if (t.track.length >= 2) {
+      const start = t.track[0]!;
+      const end = t.track[t.track.length - 1]!;
+      setStops([
+        { name: t.waypoints[0]?.name ?? 'Start', coordinate: start },
+        { name: t.waypoints[t.waypoints.length - 1]?.name ?? t.name ?? 'Finish', coordinate: end },
+      ]);
+      setLegModes(['track']);
+      setTrackGeometries([t.track]);
+    } else if (t.waypoints.length >= 2) {
+      setStops(t.waypoints.map((w) => ({ ...w })));
+      setLegModes(t.waypoints.slice(1).map(() => 'flight' as LegMode));
+      setTrackGeometries(t.waypoints.slice(1).map(() => null));
+    }
+    playheadRef.current = 0;
+    setPlayheadMs(0);
   };
 
   const setLegMode = (leg: number, mode: LegMode) =>
@@ -444,6 +508,7 @@ export default function Editor() {
         </div>
 
         <PlaceSearch onPick={addStop} />
+        <TrackImport onImport={importGpx} />
         <StopList
           stops={stops}
           legModes={legModes}

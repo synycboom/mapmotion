@@ -141,6 +141,9 @@ function LegConnector({
       >
         🚗 Drive
       </button>
+      {mode === 'track' && (
+        <span style={pill(true)}>📍 Imported track</span>
+      )}
       {mode === 'drive' && status === 'loading' && (
         <span style={{ opacity: 0.5 }}>finding roads…</span>
       )}
@@ -150,6 +153,14 @@ function LegConnector({
           style={{ color: '#ffc078' }}
         >
           no road route
+        </span>
+      )}
+      {mode === 'track' && status === 'fallback' && (
+        <span
+          title="Track geometry isn't stored in the link. Re-import the file, or load the project from your library."
+          style={{ color: '#ffc078' }}
+        >
+          track not in link — re-import
         </span>
       )}
     </div>

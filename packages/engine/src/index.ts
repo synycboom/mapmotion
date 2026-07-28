@@ -6,3 +6,4 @@ export * from './scene';
 export * from './compile';
 export * from './search';
 export * from './simplify';
+export * from './importTrack';

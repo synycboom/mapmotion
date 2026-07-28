@@ -61,9 +61,14 @@ export function encodeState(s: UrlState): string {
         .join(STOP_SEP),
     );
   }
-  // Legs encode as a compact flag string, one char per leg: f=flight, d=drive.
-  if (s.legModes.some((m) => m === 'drive')) {
-    params.set('l', s.legModes.map((m) => (m === 'drive' ? 'd' : 'f')).join(''));
+  // Legs encode as a compact flag string, one char per leg:
+  // f=flight, d=drive, t=imported track. Track *geometry* is far too big for
+  // a URL, so a 't' leg reloaded from a link arcs until re-imported.
+  if (s.legModes.some((m) => m !== 'flight')) {
+    params.set(
+      'l',
+      s.legModes.map((m) => (m === 'drive' ? 'd' : m === 'track' ? 't' : 'f')).join(''),
+    );
   }
   params.set('f', s.format);
   params.set('style', s.styleId);
@@ -100,7 +105,8 @@ export function decodeState(
   const legRaw = p.get('l') ?? '';
   const legModes: LegMode[] = Array.from(
     { length: Math.max(0, stops.length - 1) },
-    (_, i) => (legRaw[i] === 'd' ? 'drive' : 'flight'),
+    (_, i) =>
+      legRaw[i] === 'd' ? 'drive' : legRaw[i] === 't' ? 'track' : 'flight',
   );
 
   const f = p.get('f');
