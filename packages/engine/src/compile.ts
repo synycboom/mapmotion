@@ -30,6 +30,10 @@ export interface TripOptions {
   format?: Partial<ProjectFormat>;
   /** Zoom used when hovering over a stop. */
   stopZoom?: number;
+  /** Camera tilt in degrees applied to every keyframe (0 = straight down). */
+  pitch?: number;
+  /** Camera rotation in degrees applied to every keyframe. */
+  bearing?: number;
   /** How long the camera dwells on each stop, ms. */
   dwellMs?: number;
   /** Base travel time per leg, ms (scaled a bit by distance). */
@@ -79,6 +83,10 @@ export function compileTrip(
   if (stops.length < 2) throw new Error('compileTrip needs at least 2 stops');
 
   const stopZoom = opts.stopZoom ?? 5.2;
+  // MapLibre rejects pitch above 85; clamp rather than let a bad saved
+  // project throw on load.
+  const pitch = Math.min(85, Math.max(0, opts.pitch ?? 0));
+  const bearing = ((opts.bearing ?? 0) % 360 + 360) % 360;
   const dwellMs = opts.dwellMs ?? 1400;
   const baseLegMs = opts.legMs ?? 2600;
 
@@ -95,7 +103,7 @@ export function compileTrip(
 
   // Opening: camera on first stop, marker pops immediately.
   const first = stops[0]!;
-  camera.push({ tMs: 0, camera: cam(first.coordinate, stopZoom) });
+  camera.push({ tMs: 0, camera: cam(first.coordinate, stopZoom, bearing, pitch) });
   markers.push(marker(0, first, 200));
   t += dwellFor(0);
 
@@ -127,7 +135,7 @@ export function compileTrip(
     );
     const legMs = clampDuration(opts.legDurations?.[legIndex], derived);
 
-    camera.push({ tMs: t, camera: cam(from.coordinate, stopZoom), easing: 'easeInOutCubic' });
+    camera.push({ tMs: t, camera: cam(from.coordinate, stopZoom, bearing, pitch), easing: 'easeInOutCubic' });
 
     const color = opts.legColors?.[legIndex] ?? opts.routeColor ?? '#e8590c';
     routes.push({
@@ -148,7 +156,7 @@ export function compileTrip(
     });
 
     t += legMs;
-    camera.push({ tMs: t, camera: cam(to.coordinate, stopZoom), easing: 'easeInOutCubic' });
+    camera.push({ tMs: t, camera: cam(to.coordinate, stopZoom, bearing, pitch), easing: 'easeInOutCubic' });
     markers.push(marker(i, to, t - 150));
     t += dwellFor(i);
   }
@@ -189,8 +197,8 @@ function clampDuration(
   return Math.round(Math.min(MAX_SEGMENT_MS, Math.max(MIN_SEGMENT_MS, value)));
 }
 
-function cam(center: LngLat, zoom: number) {
-  return { center: [...center] as LngLat, zoom, bearing: 0, pitch: 0 };
+function cam(center: LngLat, zoom: number, bearing = 0, pitch = 0) {
+  return { center: [...center] as LngLat, zoom, bearing, pitch };
 }
 
 function marker(i: number, stop: TripStop, enterMs: number) {

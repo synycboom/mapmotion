@@ -53,6 +53,10 @@ state lives in the URL, so any map is a shareable link:
 | `l` | leg modes, one char per leg: `x`=direct `f`=flight `d`=car `m`=moto `r`=train `s`=ferry `b`=bike `w`=walk `t`=imported |
 | `spd` | speed multiplier (0.5–2.5) |
 | `res` | output resolution scale 0.25–1 (draft exports) |
+| `lb` | label visibility bits: places, countries, roads, water, pois (e.g. `10110`) |
+| `prj` | `globe` for spherical projection |
+| `ter` | `1` to enable 3D terrain |
+| `pit` | camera tilt in degrees (0–85) |
 | `styleUrl` | load an arbitrary MapLibre style (dev) |
 | `autotest` | run an export automatically (CI) |
 
@@ -80,4 +84,5 @@ xvfb-run -a node apps/web/e2e/titles-templates-test.mjs # templates + title card
 xvfb-run -a node apps/web/e2e/library-test.mjs         # saved projects + corrupt storage
 xvfb-run -a node apps/web/e2e/studio-test.mjs          # Studio timeline + retiming
 xvfb-run -a node apps/web/e2e/vehicles-test.mjs        # travel modes + moving vehicles
+xvfb-run -a node apps/web/e2e/appearance-test.mjs      # label toggles, projection, tilt, terrain
 ```

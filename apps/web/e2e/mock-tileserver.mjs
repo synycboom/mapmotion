@@ -30,6 +30,10 @@ export function startMockTileServer(port = 3210) {
   const style = {
     version: 8,
     name: 'mock-remote-style',
+    // Same glyph host the offline Minimal style uses. Unreachable from the
+    // sandbox, which is fine: the label *layer* still exists, which is what
+    // the appearance controls operate on.
+    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     sources: {
       // Indirection through TileJSON — exactly how OpenFreeMap's
       // `openmaptiles` source references /planet.
@@ -43,6 +47,20 @@ export function startMockTileServer(port = 3210) {
         source: 'mockvector',
         'source-layer': 'countries',
         paint: { 'fill-color': '#f6f1e9', 'fill-outline-color': '#c9b8a0' },
+      },
+      // A label layer so the appearance controls have something real to
+      // toggle. Classified as 'places' by its id.
+      {
+        id: 'place-labels',
+        type: 'symbol',
+        source: 'mockvector',
+        'source-layer': 'countries',
+        layout: {
+          'text-field': 'x',
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 11,
+        },
+        paint: { 'text-color': '#57534e' },
       },
     ],
   };

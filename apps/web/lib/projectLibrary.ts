@@ -1,7 +1,7 @@
 'use client';
 
 import type { LegMode, LngLat, TripStop } from '@mapmotion/engine';
-import type { FormatId } from './urlState';
+import type { FormatId, MapAppearance } from './urlState';
 
 /**
  * Saved projects, stored locally.
@@ -30,6 +30,7 @@ export interface SavedProject {
   /** Studio-mode timing overrides; null entries mean "derive it". */
   legDurations?: (number | null)[];
   stopDwells?: (number | null)[];
+  appearance?: MapAppearance;
   format: FormatId;
   styleId: string;
   speed: number;

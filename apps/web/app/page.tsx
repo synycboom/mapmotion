@@ -16,11 +16,13 @@ import { FrameApplier } from '../lib/applyFrame';
 import { exportVideo, type ExportResult } from '../lib/exporter';
 import { STYLES, getStyle, customStyle, type StyleDef } from '../lib/styles';
 import {
+  DEFAULT_APPEARANCE,
   FORMATS,
   decodeState,
   encodeState,
   scaledDims,
   type FormatId,
+  type MapAppearance,
 } from '../lib/urlState';
 import { PlaceSearch } from '../components/PlaceSearch';
 import { StopList } from '../components/StopList';
@@ -29,6 +31,14 @@ import { TrackImport } from '../components/TrackImport';
 import { TEMPLATES, getTemplate } from '../lib/templates';
 import { drawTitles } from '../lib/drawTitles';
 import { ProjectLibrary } from '../components/ProjectLibrary';
+import { AppearancePanel } from '../components/AppearancePanel';
+import {
+  applyLabelVisibility,
+  applyProjection,
+  applyTerrain,
+  countLabelLayers,
+  type LabelCategory,
+} from '../lib/mapAppearance';
 import { saveProject, type SavedProject } from '../lib/projectLibrary';
 import { Timeline } from '../components/Timeline';
 
@@ -74,6 +84,10 @@ export default function Editor() {
   const [legDurations, setLegDurations] = useState<(number | null)[]>([]);
   const [stopDwells, setStopDwells] = useState<(number | null)[]>([]);
   const [selected, setSelected] = useState<{ kind: 'leg' | 'stop'; index: number } | null>(null);
+  const [appearance, setAppearance] = useState<MapAppearance>(DEFAULT_APPEARANCE);
+  const [layerCounts, setLayerCounts] = useState<Record<LabelCategory, number>>({
+    places: 0, countries: 0, roads: 0, water: 0, pois: 0,
+  });
   const [libraryKey, setLibraryKey] = useState(0);
   const [savedAs, setSavedAs] = useState<string | null>(null);
   const [format, setFormat] = useState<FormatId>('16x9');
@@ -94,6 +108,8 @@ export default function Editor() {
   const [mapErrors, setMapErrors] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [scale, setScale] = useState(0.5);
+  /** Lets the map's style.load handler reach the latest appearance. */
+  const applyAppearanceRef = useRef<(() => void) | null>(null);
 
   // Road geometry for any leg set to 'drive'. Missing/failed lookups come
   // back as null and compileTrip arcs instead.
@@ -130,6 +146,7 @@ export default function Editor() {
     return compileTrip('Trip', stops, {
       format: { width: out.width, height: out.height, fps: 30 },
       stopZoom: 4.4,
+      pitch: appearance.pitch,
       dwellMs: Math.round(1200 / speed),
       legMs: Math.round(2600 / speed),
       legModes,
@@ -152,6 +169,7 @@ export default function Editor() {
     title,
     subtitle,
     outro,
+    appearance.pitch,
   ]);
 
   useEffect(() => {
@@ -168,12 +186,14 @@ export default function Editor() {
       stops: DEFAULT_STOPS,
       format: '16x9',
       legModes: [],
+      appearance: DEFAULT_APPEARANCE,
       styleId: autotest ? 'minimal' : 'liberty',
       speed: 1,
       res: 1,
     });
     setStops(initial.stops);
     setLegModes(initial.legModes);
+    setAppearance(initial.appearance);
     setFormat(initial.format);
     setSpeed(initial.speed);
     setRes(initial.res);
@@ -227,6 +247,7 @@ export default function Editor() {
 
       map.on('style.load', () => {
         rebuildLayers();
+        applyAppearanceRef.current?.();
         setStyleLoading(false);
         setReady(true);
       });
@@ -337,13 +358,58 @@ export default function Editor() {
     };
   }, [project, booted, rebuildLayers]);
 
+  /**
+   * Appearance is applied imperatively rather than through the project,
+   * because it describes the BASEMAP (someone else's layers) rather than our
+   * scene. Re-applied on every style load too — setStyle resets label
+   * visibility and drops the terrain source.
+   */
+  const applyAppearance = useCallback((next: MapAppearance) => {
+    const map = mapRef.current;
+    if (!map) return;
+    try {
+      applyLabelVisibility(map, next.labels);
+      applyProjection(map, next.projection);
+      applyTerrain(map, next.terrain);
+      setLayerCounts(countLabelLayers(map));
+    } catch {
+      /* appearance is decorative — never break the editor */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!booted) return;
+    const map = mapRef.current;
+    if (!map) return;
+    // Applied immediately and unconditionally. Deferring to 'idle' looks
+    // safer but isn't: a map with unreachable tiles (a blocked DEM host, a
+    // slow network) may never go idle, and every queued appearance change
+    // would then be lost forever with no error. These calls are individually
+    // guarded and no-op harmlessly if the style isn't ready yet — and
+    // 'style.load' re-applies them anyway.
+    applyAppearance(appearance);
+  }, [appearance, booted, styleId, applyAppearance]);
+
+  useEffect(() => {
+    applyAppearanceRef.current = () => applyAppearance(appearance);
+  }, [appearance, applyAppearance]);
+
   // ---- keep the URL in sync so the map is shareable ----
   useEffect(() => {
     if (!booted) return;
-    const qs = encodeState({ stops, legModes, format, styleId, speed, res });
+    const qs = new URLSearchParams(
+      encodeState({ stops, legModes, appearance, format, styleId, speed, res }),
+    );
+    // Carry through params the editor doesn't own, so a dev/test link keeps
+    // working after the first state sync.
+    const incoming = new URLSearchParams(window.location.search);
+    for (const key of ['styleUrl', 'autotest', 'hd']) {
+      const v = incoming.get(key);
+      if (v !== null) qs.set(key, v);
+    }
     window.history.replaceState(null, '', `?${qs}`);
     setCopied(false);
-  }, [stops, legModes, format, styleId, speed, res, booted]);
+  }, [stops, legModes, appearance, format, styleId, speed, res, booted]);
 
   // ---- fit the preview to the viewport ----
   useEffect(() => {
@@ -591,6 +657,7 @@ export default function Editor() {
       trackGeometries,
       legDurations,
       stopDwells,
+      appearance,
       format,
       styleId,
       speed,
@@ -609,6 +676,7 @@ export default function Editor() {
     setTrackGeometries(p.trackGeometries?.map((g) => (g ? [...g] : null)) ?? []);
     setLegDurations(p.legDurations ? [...p.legDurations] : []);
     setStopDwells(p.stopDwells ? [...p.stopDwells] : []);
+    if (p.appearance) setAppearance(p.appearance);
     setSelected(null);
     setFormat(p.format);
     setSpeed(p.speed);
@@ -781,6 +849,7 @@ export default function Editor() {
         <div style={{ marginTop: 16 }}>
           <Label>Speed · {speed.toFixed(1)}×</Label>
           <input
+            data-testid="speed-slider"
             type="range"
             min={0.5}
             max={2.5}
@@ -807,6 +876,13 @@ export default function Editor() {
             ))}
           </select>
         </div>
+
+        <AppearancePanel
+          appearance={appearance}
+          onChange={setAppearance}
+          layerCounts={layerCounts}
+          disabled={exporting}
+        />
 
         <ProjectLibrary
           onLoad={handleLoad}

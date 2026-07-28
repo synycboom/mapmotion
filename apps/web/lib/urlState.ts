@@ -17,8 +17,26 @@ export const FORMATS = {
 
 export type FormatId = keyof typeof FORMATS;
 
+export interface MapAppearance {
+  /** Per-category label visibility. */
+  labels: { places: boolean; countries: boolean; roads: boolean; water: boolean; pois: boolean };
+  projection: 'mercator' | 'globe';
+  terrain: boolean;
+  pitch: number;
+}
+
+export const DEFAULT_APPEARANCE: MapAppearance = {
+  labels: { places: true, countries: true, roads: true, water: true, pois: true },
+  projection: 'mercator',
+  terrain: false,
+  pitch: 0,
+};
+
+const LABEL_ORDER = ['places', 'countries', 'roads', 'water', 'pois'] as const;
+
 export interface UrlState {
   stops: TripStop[];
+  appearance: MapAppearance;
   /** Per-leg travel mode; length is stops.length - 1. */
   legModes: LegMode[];
   format: FormatId;
@@ -67,6 +85,14 @@ export function encodeState(s: UrlState): string {
   if (s.legModes.some((m) => m !== 'air')) {
     params.set('l', s.legModes.map(modeToCode).join(''));
   }
+  // Appearance packs into short params so links stay readable.
+  const a = s.appearance;
+  const labelBits = LABEL_ORDER.map((k) => (a.labels[k] ? '1' : '0')).join('');
+  if (labelBits !== '11111') params.set('lb', labelBits);
+  if (a.projection !== 'mercator') params.set('prj', a.projection);
+  if (a.terrain) params.set('ter', '1');
+  if (a.pitch !== 0) params.set('pit', String(Math.round(a.pitch)));
+
   params.set('f', s.format);
   params.set('style', s.styleId);
   if (s.speed !== 1) params.set('spd', String(s.speed));
@@ -105,6 +131,24 @@ export function decodeState(
     (_, i) => codeToMode(legRaw[i]),
   );
 
+  const bits = p.get('lb') ?? '';
+  const labels = { ...DEFAULT_APPEARANCE.labels };
+  if (/^[01]{5}$/.test(bits)) {
+    LABEL_ORDER.forEach((k, i) => {
+      labels[k] = bits[i] === '1';
+    });
+  }
+  const pitchRaw = Number(p.get('pit'));
+  const appearance: MapAppearance = {
+    labels,
+    projection: p.get('prj') === 'globe' ? 'globe' : 'mercator',
+    terrain: p.get('ter') === '1',
+    pitch:
+      Number.isFinite(pitchRaw) && pitchRaw >= 0 && pitchRaw <= 85
+        ? pitchRaw
+        : fallback.appearance?.pitch ?? 0,
+  };
+
   const f = p.get('f');
   const format: FormatId =
     f && f in FORMATS ? (f as FormatId) : fallback.format;
@@ -117,6 +161,7 @@ export function decodeState(
 
   return {
     stops,
+    appearance,
     legModes,
     format,
     styleId: p.get('style') ?? fallback.styleId,

@@ -136,7 +136,7 @@ const durationOf = async () => {
   return Number(t.split('/')[1].trim().replace('s', ''));
 };
 const slowDur = await durationOf();
-await page.locator('aside input[type="range"]').fill('2.5');
+await page.locator('[data-testid="speed-slider"]').fill('2.5');
 await page.waitForTimeout(2500);
 const fastDur = await durationOf();
 fastDur < slowDur * 0.6
