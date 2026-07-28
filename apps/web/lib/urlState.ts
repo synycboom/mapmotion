@@ -1,4 +1,4 @@
-import type { TripStop } from '@mapmotion/engine';
+import type { LegMode, TripStop } from '@mapmotion/engine';
 
 /**
  * Project state <-> URL. Lets a map be linked, bookmarked and reloaded with
@@ -19,6 +19,8 @@ export type FormatId = keyof typeof FORMATS;
 
 export interface UrlState {
   stops: TripStop[];
+  /** Per-leg travel mode; length is stops.length - 1. */
+  legModes: LegMode[];
   format: FormatId;
   styleId: string;
   speed: number;
@@ -59,6 +61,10 @@ export function encodeState(s: UrlState): string {
         .join(STOP_SEP),
     );
   }
+  // Legs encode as a compact flag string, one char per leg: f=flight, d=drive.
+  if (s.legModes.some((m) => m === 'drive')) {
+    params.set('l', s.legModes.map((m) => (m === 'drive' ? 'd' : 'f')).join(''));
+  }
   params.set('f', s.format);
   params.set('style', s.styleId);
   if (s.speed !== 1) params.set('spd', String(s.speed));
@@ -91,6 +97,12 @@ export function decodeState(
     if (parsed.length) stops = parsed;
   }
 
+  const legRaw = p.get('l') ?? '';
+  const legModes: LegMode[] = Array.from(
+    { length: Math.max(0, stops.length - 1) },
+    (_, i) => (legRaw[i] === 'd' ? 'drive' : 'flight'),
+  );
+
   const f = p.get('f');
   const format: FormatId =
     f && f in FORMATS ? (f as FormatId) : fallback.format;
@@ -103,6 +115,7 @@ export function decodeState(
 
   return {
     stops,
+    legModes,
     format,
     styleId: p.get('style') ?? fallback.styleId,
     speed,

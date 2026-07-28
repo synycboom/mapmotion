@@ -5,11 +5,21 @@ import type {
   ProjectFormat,
 } from './types';
 import { greatCircleArc, distanceMeters } from './geo';
+import { simplifyLine } from './simplify';
 
 export interface TripStop {
   name: string;
   coordinate: LngLat;
 }
+
+/**
+ * How a leg between two stops is drawn.
+ *  - 'flight': great-circle arc, computed locally. Always available.
+ *  - 'drive':  real road geometry from a routing service. Falls back to
+ *              'flight' whenever geometry is missing, so a routing outage
+ *              degrades the look rather than breaking the animation.
+ */
+export type LegMode = 'flight' | 'drive';
 
 export interface TripOptions {
   format?: Partial<ProjectFormat>;
@@ -20,11 +30,20 @@ export interface TripOptions {
   /** Base travel time per leg, ms (scaled a bit by distance). */
   legMs?: number;
   routeColor?: string;
+  /** Per-leg mode; index i describes stops[i] -> stops[i+1]. */
+  legModes?: readonly LegMode[];
+  /**
+   * Resolved road geometry per leg, when a router has supplied it.
+   * `null`/absent means "not available" and the leg falls back to an arc.
+   */
+  legGeometries?: readonly (readonly LngLat[] | null | undefined)[];
+  /** Simplification tolerance in degrees for supplied geometry. */
+  simplifyTolerance?: number;
 }
 
 /**
  * Quick-mode compiler: an ordered list of stops becomes a full Project with
- * camera keyframes, animated great-circle routes, and pop-in markers.
+ * camera keyframes, animated routes, and pop-in markers.
  * Studio mode (later) edits the compiled tracks directly.
  */
 export function compileTrip(
@@ -53,16 +72,26 @@ export function compileTrip(
   for (let i = 1; i < stops.length; i++) {
     const from = stops[i - 1]!;
     const to = stops[i]!;
+    const legIndex = i - 1;
+
+    const supplied = opts.legGeometries?.[legIndex];
+    const wantsDrive = opts.legModes?.[legIndex] === 'drive';
+    const coordinates =
+      wantsDrive && supplied && supplied.length >= 2
+        ? simplifyLine(supplied, opts.simplifyTolerance)
+        : greatCircleArc(from.coordinate, to.coordinate, 96);
 
     // Longer legs get a bit more time (log-scaled, clamped).
     const km = distanceMeters(from.coordinate, to.coordinate) / 1000;
-    const legMs = Math.round(baseLegMs * Math.min(1.8, Math.max(0.8, Math.log10(km + 10) / 3 + 0.55)));
+    const legMs = Math.round(
+      baseLegMs * Math.min(1.8, Math.max(0.8, Math.log10(km + 10) / 3 + 0.55)),
+    );
 
     camera.push({ tMs: t, camera: cam(from.coordinate, stopZoom), easing: 'easeInOutCubic' });
 
     routes.push({
       id: `route-${i}`,
-      coordinates: greatCircleArc(from.coordinate, to.coordinate, 96),
+      coordinates: coordinates as LngLat[],
       startMs: t,
       endMs: t + legMs,
       easing: 'easeInOutSine',

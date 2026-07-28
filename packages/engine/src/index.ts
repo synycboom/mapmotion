@@ -5,3 +5,4 @@ export * from './geo';
 export * from './scene';
 export * from './compile';
 export * from './search';
+export * from './simplify';

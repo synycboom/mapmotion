@@ -5,6 +5,7 @@ import maplibregl from 'maplibre-gl';
 import {
   compileTrip,
   sceneAt,
+  type LegMode,
   type PlaceHit,
   type Project,
   type TripStop,
@@ -21,6 +22,7 @@ import {
 } from '../lib/urlState';
 import { PlaceSearch } from '../components/PlaceSearch';
 import { StopList } from '../components/StopList';
+import { useLegRoutes } from '../lib/useLegRoutes';
 
 declare global {
   interface Window {
@@ -50,6 +52,7 @@ export default function Editor() {
 
   const [booted, setBooted] = useState(false);
   const [stops, setStops] = useState<TripStop[]>(DEFAULT_STOPS);
+  const [legModes, setLegModes] = useState<LegMode[]>(['flight', 'flight']);
   const [format, setFormat] = useState<FormatId>('16x9');
   const [speed, setSpeed] = useState(1);
   const [res, setRes] = useState(1);
@@ -69,6 +72,13 @@ export default function Editor() {
   const [copied, setCopied] = useState(false);
   const [scale, setScale] = useState(0.5);
 
+  // Road geometry for any leg set to 'drive'. Missing/failed lookups come
+  // back as null and compileTrip arcs instead.
+  const { geometries: legGeometries, statuses: legStatuses } = useLegRoutes(
+    stops,
+    legModes,
+  );
+
   /** The compiled scene — recomputed whenever the inputs change. */
   const project = useMemo<Project | null>(() => {
     if (stops.length < 2) return null;
@@ -78,8 +88,10 @@ export default function Editor() {
       stopZoom: 4.4,
       dwellMs: Math.round(1200 / speed),
       legMs: Math.round(2600 / speed),
+      legModes,
+      legGeometries,
     });
-  }, [stops, format, speed, res]);
+  }, [stops, format, speed, res, legModes, legGeometries]);
 
   useEffect(() => {
     projectRef.current = project;
@@ -94,11 +106,13 @@ export default function Editor() {
     const initial = decodeState(location.search, {
       stops: DEFAULT_STOPS,
       format: '16x9',
+      legModes: [],
       styleId: autotest ? 'minimal' : 'liberty',
       speed: 1,
       res: 1,
     });
     setStops(initial.stops);
+    setLegModes(initial.legModes);
     setFormat(initial.format);
     setSpeed(initial.speed);
     setRes(initial.res);
@@ -233,10 +247,10 @@ export default function Editor() {
   // ---- keep the URL in sync so the map is shareable ----
   useEffect(() => {
     if (!booted) return;
-    const qs = encodeState({ stops, format, styleId, speed, res });
+    const qs = encodeState({ stops, legModes, format, styleId, speed, res });
     window.history.replaceState(null, '', `?${qs}`);
     setCopied(false);
-  }, [stops, format, styleId, speed, res, booted]);
+  }, [stops, legModes, format, styleId, speed, res, booted]);
 
   // ---- fit the preview to the viewport ----
   useEffect(() => {
@@ -374,16 +388,46 @@ export default function Editor() {
     }
   };
 
-  const addStop = (hit: PlaceHit) =>
+  // Stops and legs must stay length-consistent: legs = stops - 1. Each
+  // mutation below fixes up legModes in the same commit so the two never
+  // disagree (a mismatch would silently mis-assign modes to legs).
+  const addStop = (hit: PlaceHit) => {
     setStops((prev) => [...prev, { name: hit.name, coordinate: hit.coordinate }]);
-  const removeStop = (i: number) =>
+    setLegModes((prev) => [...prev, 'flight']);
+  };
+
+  const removeStop = (i: number) => {
     setStops((prev) => prev.filter((_, j) => j !== i));
-  const moveStop = (i: number, dir: -1 | 1) =>
+    // Dropping a stop removes the leg that led into it (or out of it, for
+    // the first stop).
+    setLegModes((prev) => prev.filter((_, j) => j !== Math.max(0, i - 1)));
+  };
+
+  const moveStop = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= stops.length) return;
     setStops((prev) => {
-      const j = i + dir;
-      if (j < 0 || j >= prev.length) return prev;
       const next = [...prev];
       [next[i], next[j]] = [next[j]!, next[i]!];
+      return next;
+    });
+    // Reordering changes which places each leg connects, so modes no longer
+    // describe the same journey. Reset the two touched legs to flight rather
+    // than silently keeping a 'drive' that now spans an ocean.
+    setLegModes((prev) => {
+      const next = [...prev];
+      for (const leg of [Math.min(i, j) - 1, Math.min(i, j)]) {
+        if (leg >= 0 && leg < next.length) next[leg] = 'flight';
+      }
+      return next;
+    });
+  };
+
+  const setLegMode = (leg: number, mode: LegMode) =>
+    setLegModes((prev) => {
+      const next = [...prev];
+      while (next.length < stops.length - 1) next.push('flight');
+      next[leg] = mode;
       return next;
     });
 
@@ -400,7 +444,14 @@ export default function Editor() {
         </div>
 
         <PlaceSearch onPick={addStop} />
-        <StopList stops={stops} onRemove={removeStop} onMove={moveStop} />
+        <StopList
+          stops={stops}
+          legModes={legModes}
+          legStatuses={legStatuses}
+          onRemove={removeStop}
+          onMove={moveStop}
+          onSetLegMode={setLegMode}
+        />
 
         <div style={{ marginTop: 18 }}>
           <Label>Format</Label>

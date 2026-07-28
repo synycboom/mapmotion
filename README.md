@@ -41,6 +41,7 @@ state lives in the URL, so any map is a shareable link:
 | `s` | stops, `name,lng,lat` joined by `~` |
 | `f` | format: `16x9`, `9x16`, `1x1` |
 | `style` | `liberty`, `bright`, `positron`, `paper`, `minimal` |
+| `l` | leg modes, one char per leg: `f`=flight, `d`=drive |
 | `spd` | speed multiplier (0.5–2.5) |
 | `res` | output resolution scale 0.25–1 (draft exports) |
 | `styleUrl` | load an arbitrary MapLibre style (dev) |
@@ -50,11 +51,19 @@ Place search hits `/api/geocode`, which answers from a bundled index of ~6,500
 notable cities (instant, offline, no rate limit) and only falls back to an
 upstream geocoder when local results are thin.
 
+Each leg between two stops is either a **flight** (great-circle arc, computed
+locally) or a **drive** (real road geometry via `/api/route`, which proxies
+OSRM). `/api/route` never fails the caller: if the router is down,
+rate-limited, or the points aren't road-connected, it returns
+`{ geometry: null, reason }` and the leg falls back to an arc. Set `ROUTER_URL`
+to point at a different OSRM-compatible instance.
+
 ## Tests
 
 ```bash
-npm test                                    # 32 engine unit tests
+npm test                                    # 45 engine unit tests
 node apps/web/e2e/export-test.mjs           # headless export proof
 xvfb-run -a node apps/web/e2e/headful-style-test.mjs   # remote vector style + export
 xvfb-run -a node apps/web/e2e/quickmode-test.mjs       # full Quick mode UI flow
+xvfb-run -a node apps/web/e2e/routes-test.mjs          # driving routes + failure fallback
 ```
