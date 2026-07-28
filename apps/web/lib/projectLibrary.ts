@@ -27,6 +27,9 @@ export interface SavedProject {
   legModes: LegMode[];
   /** Imported track geometry per leg — the part a URL can't hold. */
   trackGeometries: (LngLat[] | null)[];
+  /** Studio-mode timing overrides; null entries mean "derive it". */
+  legDurations?: (number | null)[];
+  stopDwells?: (number | null)[];
   format: FormatId;
   styleId: string;
   speed: number;

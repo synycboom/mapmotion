@@ -30,6 +30,7 @@ import { TEMPLATES, getTemplate } from '../lib/templates';
 import { drawTitles } from '../lib/drawTitles';
 import { ProjectLibrary } from '../components/ProjectLibrary';
 import { saveProject, type SavedProject } from '../lib/projectLibrary';
+import { Timeline } from '../components/Timeline';
 
 declare global {
   interface Window {
@@ -69,6 +70,10 @@ export default function Editor() {
   const [title, setTitle] = useState('');
   const [subtitle, setSubtitle] = useState('');
   const [outro, setOutro] = useState(false);
+  const [mode, setMode] = useState<'quick' | 'studio'>('quick');
+  const [legDurations, setLegDurations] = useState<(number | null)[]>([]);
+  const [stopDwells, setStopDwells] = useState<(number | null)[]>([]);
+  const [selected, setSelected] = useState<{ kind: 'leg' | 'stop'; index: number } | null>(null);
   const [libraryKey, setLibraryKey] = useState(0);
   const [savedAs, setSavedAs] = useState<string | null>(null);
   const [format, setFormat] = useState<FormatId>('16x9');
@@ -129,11 +134,25 @@ export default function Editor() {
       legMs: Math.round(2600 / speed),
       legModes,
       legGeometries,
+      legDurations,
+      stopDwells,
       title,
       subtitle,
       outro,
     });
-  }, [stops, format, speed, res, legModes, legGeometries, title, subtitle, outro]);
+  }, [
+    stops,
+    format,
+    speed,
+    res,
+    legModes,
+    legGeometries,
+    legDurations,
+    stopDwells,
+    title,
+    subtitle,
+    outro,
+  ]);
 
   useEffect(() => {
     projectRef.current = project;
@@ -463,6 +482,7 @@ export default function Editor() {
     setStops((prev) => [...prev, { name: hit.name, coordinate: hit.coordinate }]);
     setLegModes((prev) => [...prev, 'flight']);
     setTrackGeometries((prev) => [...prev, null]);
+    setLegDurations((prev) => [...prev, null]);
   };
 
   const removeStop = (i: number) => {
@@ -472,6 +492,9 @@ export default function Editor() {
     const leg = Math.max(0, i - 1);
     setLegModes((prev) => prev.filter((_, j) => j !== leg));
     setTrackGeometries((prev) => prev.filter((_, j) => j !== leg));
+    setLegDurations((prev) => prev.filter((_, j) => j !== leg));
+    setStopDwells((prev) => prev.filter((_, j) => j !== i));
+    setSelected(null);
   };
 
   const moveStop = (i: number, dir: -1 | 1) => {
@@ -500,6 +523,7 @@ export default function Editor() {
       }
       return next;
     });
+    setSelected(null);
   };
 
   /**
@@ -517,10 +541,14 @@ export default function Editor() {
       ]);
       setLegModes(['track']);
       setTrackGeometries([t.track]);
+      setLegDurations([null]);
+      setStopDwells([]);
     } else if (t.waypoints.length >= 2) {
       setStops(t.waypoints.map((w) => ({ ...w })));
       setLegModes(t.waypoints.slice(1).map(() => 'flight' as LegMode));
       setTrackGeometries(t.waypoints.slice(1).map(() => null));
+      setLegDurations(t.waypoints.slice(1).map(() => null));
+      setStopDwells([]);
     }
     playheadRef.current = 0;
     setPlayheadMs(0);
@@ -532,6 +560,8 @@ export default function Editor() {
       stops,
       legModes,
       trackGeometries,
+      legDurations,
+      stopDwells,
       format,
       styleId,
       speed,
@@ -548,6 +578,9 @@ export default function Editor() {
     setStops(p.stops.map((x) => ({ ...x, coordinate: [...x.coordinate] as LngLat })));
     setLegModes([...p.legModes]);
     setTrackGeometries(p.trackGeometries?.map((g) => (g ? [...g] : null)) ?? []);
+    setLegDurations(p.legDurations ? [...p.legDurations] : []);
+    setStopDwells(p.stopDwells ? [...p.stopDwells] : []);
+    setSelected(null);
     setFormat(p.format);
     setSpeed(p.speed);
     setTitle(p.title ?? '');
@@ -565,6 +598,9 @@ export default function Editor() {
     setStops(tpl.stops.map((x) => ({ ...x, coordinate: [...x.coordinate] as LngLat })));
     setLegModes([...tpl.legModes]);
     setTrackGeometries(tpl.legModes.map(() => null));
+    setLegDurations(tpl.legModes.map(() => null));
+    setStopDwells([]);
+    setSelected(null);
     setFormat(tpl.format);
     setSpeed(tpl.speed);
     setTitle(tpl.label);
@@ -589,9 +625,27 @@ export default function Editor() {
     <main style={{ padding: 20, display: 'flex', gap: 20, alignItems: 'flex-start' }}>
       {/* ---------------- Quick mode panel ---------------- */}
       <aside style={{ width: 340, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
           <h1 style={{ margin: 0, fontSize: 18 }}>Mapmotion</h1>
-          <span style={{ opacity: 0.5, fontSize: 12 }}>Quick mode</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+            {(['quick', 'studio'] as const).map((m) => (
+              <button
+                key={m}
+                data-testid={`mode-${m}`}
+                onClick={() => setMode(m)}
+                style={{
+                  ...btn,
+                  padding: '4px 10px',
+                  fontSize: 11,
+                  textTransform: 'capitalize',
+                  background: mode === m ? '#e8590c' : '#1c2a42',
+                  borderColor: mode === m ? '#e8590c' : '#34496b',
+                }}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div style={{ marginBottom: 12 }}>
@@ -843,6 +897,40 @@ export default function Editor() {
             {exporting ? `Exporting ${(progress * 100).toFixed(0)}%` : 'Export video'}
           </button>
         </div>
+
+        {mode === 'studio' && project && (
+          <Timeline
+            project={project}
+            stops={stops}
+            playheadMs={playheadMs}
+            legDurations={legDurations}
+            stopDwells={stopDwells}
+            selected={selected}
+            onSelect={setSelected}
+            onSeek={seek}
+            onSetLegDuration={(i, ms) =>
+              setLegDurations((prev) => {
+                const next = [...prev];
+                while (next.length < stops.length - 1) next.push(null);
+                next[i] = ms;
+                return next;
+              })
+            }
+            onSetStopDwell={(i, ms) =>
+              setStopDwells((prev) => {
+                const next = [...prev];
+                while (next.length < stops.length) next.push(null);
+                next[i] = ms;
+                return next;
+              })
+            }
+            onReset={() => {
+              setLegDurations([]);
+              setStopDwells([]);
+              setSelected(null);
+            }}
+          />
+        )}
 
         {error && <p style={{ color: '#ff8787', fontSize: 13 }}>{error}</p>}
         {mapErrors.length > 0 && (

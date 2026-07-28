@@ -44,6 +44,14 @@ export interface TripOptions {
   legGeometries?: readonly (readonly LngLat[] | null | undefined)[];
   /** Simplification tolerance in degrees for supplied geometry. */
   simplifyTolerance?: number;
+  /**
+   * Per-leg travel duration in ms, index i = stops[i] -> stops[i+1].
+   * `null`/absent means "derive it from distance" (Quick mode). Studio mode
+   * sets these when the user retimes a segment.
+   */
+  legDurations?: readonly (number | null | undefined)[];
+  /** Per-stop dwell in ms; `null`/absent uses the global dwellMs. */
+  stopDwells?: readonly (number | null | undefined)[];
   /** Intro/outro card text. Omit or leave blank for no titles. */
   title?: string | null;
   subtitle?: string | null;
@@ -73,11 +81,16 @@ export function compileTrip(
 
   let t = 0;
 
+  const dwellFor = (i: number) => {
+    const override = opts.stopDwells?.[i];
+    return clampDuration(override, dwellMs);
+  };
+
   // Opening: camera on first stop, marker pops immediately.
   const first = stops[0]!;
   camera.push({ tMs: 0, camera: cam(first.coordinate, stopZoom) });
   markers.push(marker(0, first, 200));
-  t += dwellMs;
+  t += dwellFor(0);
 
   for (let i = 1; i < stops.length; i++) {
     const from = stops[i - 1]!;
@@ -92,11 +105,13 @@ export function compileTrip(
         ? simplifyLine(supplied, opts.simplifyTolerance)
         : greatCircleArc(from.coordinate, to.coordinate, 96);
 
-    // Longer legs get a bit more time (log-scaled, clamped).
+    // Longer legs get a bit more time (log-scaled, clamped) unless the user
+    // has retimed this segment in Studio mode.
     const km = distanceMeters(from.coordinate, to.coordinate) / 1000;
-    const legMs = Math.round(
+    const derived = Math.round(
       baseLegMs * Math.min(1.8, Math.max(0.8, Math.log10(km + 10) / 3 + 0.55)),
     );
+    const legMs = clampDuration(opts.legDurations?.[legIndex], derived);
 
     camera.push({ tMs: t, camera: cam(from.coordinate, stopZoom), easing: 'easeInOutCubic' });
 
@@ -113,7 +128,7 @@ export function compileTrip(
     t += legMs;
     camera.push({ tMs: t, camera: cam(to.coordinate, stopZoom), easing: 'easeInOutCubic' });
     markers.push(marker(i, to, t - 150));
-    t += dwellMs;
+    t += dwellFor(i);
   }
 
   const format: ProjectFormat = {
@@ -132,6 +147,24 @@ export function compileTrip(
   });
 
   return { version: 1, name, format, camera, routes, markers, titles };
+}
+
+/**
+ * Durations come from user input and from persisted projects, so they can be
+ * NaN, negative, or absurd. Clamp to a sane window rather than letting a bad
+ * value produce a zero-length or hour-long segment.
+ */
+const MIN_SEGMENT_MS = 200;
+const MAX_SEGMENT_MS = 60_000;
+
+function clampDuration(
+  value: number | null | undefined,
+  fallback: number,
+): number {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.round(Math.min(MAX_SEGMENT_MS, Math.max(MIN_SEGMENT_MS, value)));
 }
 
 function cam(center: LngLat, zoom: number) {

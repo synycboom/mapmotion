@@ -150,8 +150,16 @@ await withRouter('ok', 3224, 3143, async (port) => {
   const status = await page.locator('[data-testid="leg-0"]').getAttribute('data-status');
   status === 'ok' ? pass('drive leg resolves road geometry') : fail('drive leg resolves road geometry', status);
 
-  await seekEnd();
-  const drive = await routePointCount(page);
+  // Geometry arriving recompiles the project and resets the playhead, so a
+  // single read can land before the road line is drawn. Retry until it
+  // settles on something that isn't the 97-point arc.
+  let drive = { n: -1, why: '' };
+  for (let i = 0; i < 10; i++) {
+    await seekEnd();
+    drive = await routePointCount(page);
+    if (drive.n > 2 && drive.n !== 97) break;
+    await page.waitForTimeout(600);
+  }
   drive.n > 2 && drive.n !== 97
     ? pass(`drive leg draws road geometry (${drive.n} pts, not the arc)`)
     : fail('drive leg draws road geometry', `${drive.n} ${drive.why}`);

@@ -27,6 +27,15 @@ Import the repo in Vercel and set **Root Directory** to `apps/web` (keep "Includ
 2. The engine never reads from the map; it only writes FrameState to it (`jumpTo`, never `easeTo`).
 3. Easing/interpolation are pure functions, unit-tested against golden values.
 
+## Quick mode and Studio mode
+
+**Quick mode** hides time entirely: pick places, pick a look, export. **Studio
+mode** shows the same project on a timeline where every stop dwell and travel
+leg can be retimed individually. They are not different data models — Studio
+edits the `legDurations`/`stopDwells` the compiler already reads, so switching
+modes never rebuilds or loses work, and any segment can be reverted to its
+automatic duration.
+
 ## Quick mode
 
 Search for cities, build a trip, export a video — no account needed. Project
@@ -61,7 +70,7 @@ to point at a different OSRM-compatible instance.
 ## Tests
 
 ```bash
-npm test                                    # 73 engine unit tests
+npm test                                    # 82 engine unit tests
 node apps/web/e2e/export-test.mjs           # headless export proof
 xvfb-run -a node apps/web/e2e/headful-style-test.mjs   # remote vector style + export
 xvfb-run -a node apps/web/e2e/quickmode-test.mjs       # full Quick mode UI flow
@@ -69,4 +78,5 @@ xvfb-run -a node apps/web/e2e/routes-test.mjs          # driving routes + failur
 xvfb-run -a node apps/web/e2e/import-test.mjs          # GPX/KML import
 xvfb-run -a node apps/web/e2e/titles-templates-test.mjs # templates + title cards
 xvfb-run -a node apps/web/e2e/library-test.mjs         # saved projects + corrupt storage
+xvfb-run -a node apps/web/e2e/studio-test.mjs          # Studio timeline + retiming
 ```
