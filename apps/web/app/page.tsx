@@ -5,7 +5,10 @@ import maplibregl from 'maplibre-gl';
 import {
   compileTrip,
   sceneAt,
+  DEFAULT_PIN,
+  PIN_STYLES,
   type ImportedTrack,
+  type PinAppearance,
   type LegMode,
   type LngLat,
   type PlaceHit,
@@ -84,6 +87,7 @@ export default function Editor() {
   const [legDurations, setLegDurations] = useState<(number | null)[]>([]);
   const [stopDwells, setStopDwells] = useState<(number | null)[]>([]);
   const [selected, setSelected] = useState<{ kind: 'leg' | 'stop'; index: number } | null>(null);
+  const [pin, setPin] = useState<PinAppearance>(DEFAULT_PIN);
   const [appearance, setAppearance] = useState<MapAppearance>(DEFAULT_APPEARANCE);
   const [layerCounts, setLayerCounts] = useState<Record<LabelCategory, number>>({
     places: 0, countries: 0, roads: 0, water: 0, pois: 0,
@@ -147,6 +151,7 @@ export default function Editor() {
       format: { width: out.width, height: out.height, fps: 30 },
       stopZoom: 4.4,
       pitch: appearance.pitch,
+      pin,
       dwellMs: Math.round(1200 / speed),
       legMs: Math.round(2600 / speed),
       legModes,
@@ -170,6 +175,7 @@ export default function Editor() {
     subtitle,
     outro,
     appearance.pitch,
+    pin,
   ]);
 
   useEffect(() => {
@@ -658,6 +664,7 @@ export default function Editor() {
       legDurations,
       stopDwells,
       appearance,
+      pin,
       format,
       styleId,
       speed,
@@ -677,6 +684,7 @@ export default function Editor() {
     setLegDurations(p.legDurations ? [...p.legDurations] : []);
     setStopDwells(p.stopDwells ? [...p.stopDwells] : []);
     if (p.appearance) setAppearance(p.appearance);
+    if (p.pin) setPin(p.pin);
     setSelected(null);
     setFormat(p.format);
     setSpeed(p.speed);
@@ -779,6 +787,65 @@ export default function Editor() {
           onMove={moveStop}
           onSetLegMode={setLegMode}
         />
+
+        <div style={{ marginTop: 18 }}>
+          <Label>Marker style</Label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {PIN_STYLES.map((ps) => (
+              <button
+                key={ps.id}
+                data-testid={`pin-${ps.id}`}
+                onClick={() => setPin({ ...pin, style: ps.id })}
+                title={ps.hint}
+                disabled={exporting}
+                style={{
+                  ...btn,
+                  padding: '4px 9px',
+                  fontSize: 11,
+                  borderRadius: 999,
+                  background: pin.style === ps.id ? '#e8590c' : '#1c2a42',
+                  borderColor: pin.style === ps.id ? '#e8590c' : '#34496b',
+                }}
+              >
+                {ps.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <input
+              data-testid="pin-color"
+              type="color"
+              value={pin.color}
+              disabled={exporting}
+              onChange={(e) => setPin({ ...pin, color: e.target.value })}
+              style={{ width: 30, height: 26, padding: 0, border: '1px solid #34496b', borderRadius: 4, background: 'transparent' }}
+            />
+            {pin.style === 'emoji' && (
+              <input
+                data-testid="pin-emoji-input"
+                value={pin.emoji ?? ''}
+                onChange={(e) => setPin({ ...pin, emoji: e.target.value.slice(0, 4) })}
+                placeholder="📍"
+                disabled={exporting}
+                style={{ ...inputStyle, width: 60, textAlign: 'center' }}
+              />
+            )}
+            <input
+              data-testid="pin-size"
+              type="range"
+              min={0.4}
+              max={3}
+              step={0.1}
+              value={pin.size}
+              disabled={exporting}
+              onChange={(e) => setPin({ ...pin, size: Number(e.target.value) })}
+              style={{ flex: 1 }}
+            />
+            <span style={{ fontSize: 10, opacity: 0.55, minWidth: 26 }}>
+              {pin.size.toFixed(1)}×
+            </span>
+          </div>
+        </div>
 
         <div style={{ marginTop: 18 }}>
           <Label>Title card</Label>

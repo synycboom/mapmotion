@@ -74,7 +74,7 @@ to point at a different OSRM-compatible instance.
 ## Tests
 
 ```bash
-npm test                                    # 108 engine unit tests
+npm test                                    # 120 engine unit tests
 node apps/web/e2e/export-test.mjs           # headless export proof
 xvfb-run -a node apps/web/e2e/headful-style-test.mjs   # remote vector style + export
 xvfb-run -a node apps/web/e2e/quickmode-test.mjs       # full Quick mode UI flow
@@ -85,4 +85,5 @@ xvfb-run -a node apps/web/e2e/library-test.mjs         # saved projects + corrup
 xvfb-run -a node apps/web/e2e/studio-test.mjs          # Studio timeline + retiming
 xvfb-run -a node apps/web/e2e/vehicles-test.mjs        # travel modes + moving vehicles
 xvfb-run -a node apps/web/e2e/appearance-test.mjs      # label toggles, projection, tilt, terrain
+xvfb-run -a node apps/web/e2e/pins-test.mjs            # marker styles
 ```

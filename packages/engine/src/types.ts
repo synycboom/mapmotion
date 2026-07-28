@@ -11,6 +11,7 @@
 
 import type { TitleCard, TitleState } from './title';
 import type { TravelMode } from './travel';
+import type { PinAppearance } from './pins';
 
 export type LngLat = [number, number];
 
@@ -74,6 +75,8 @@ export interface MarkerTrack {
   id: string;
   coordinate: LngLat;
   label?: string;
+  /** Fully resolved appearance for this marker. */
+  pin?: PinAppearance;
   /** When the marker pops in. */
   enterMs: number;
   enterDurationMs?: number;

@@ -4,6 +4,7 @@ export * from './camera';
 export * from './geo';
 export * from './scene';
 export * from './travel';
+export * from './pins';
 export * from './compile';
 export * from './search';
 export * from './simplify';

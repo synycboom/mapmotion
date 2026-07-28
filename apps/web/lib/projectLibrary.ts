@@ -1,6 +1,7 @@
 'use client';
 
 import type { LegMode, LngLat, TripStop } from '@mapmotion/engine';
+import type { PinAppearance } from '@mapmotion/engine';
 import type { FormatId, MapAppearance } from './urlState';
 
 /**
@@ -31,6 +32,7 @@ export interface SavedProject {
   legDurations?: (number | null)[];
   stopDwells?: (number | null)[];
   appearance?: MapAppearance;
+  pin?: PinAppearance;
   format: FormatId;
   styleId: string;
   speed: number;

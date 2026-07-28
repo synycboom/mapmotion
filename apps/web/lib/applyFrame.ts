@@ -6,6 +6,12 @@ import {
   type Project,
 } from '@mapmotion/engine';
 import { ensureVehicleIcons, vehicleImageId } from './vehicleIcons';
+import { DEFAULT_PIN } from '@mapmotion/engine';
+
+/** Image id for a marker's own uploaded picture. */
+export function markerImageId(markerId: string): string {
+  return `mm-pinimg-${markerId}`;
+}
 
 /**
  * Applies a FrameState to a MapLibre map. Uses jumpTo (never easeTo) so the
@@ -101,9 +107,16 @@ export class FrameApplier {
    * an icon arriving late would produce an export frame with no vehicle.
    */
   vehiclePairs(): Array<{ icon: string; color: string }> {
-    return this.project.routes
+    const pairs = this.project.routes
       .filter((r) => r.vehicle)
       .map((r) => ({ icon: r.vehicle!.icon, color: r.vehicle!.color }));
+    // Pin and marker styles use the same rasterisation path as vehicles.
+    for (const m of this.project.markers) {
+      const pin = m.pin;
+      if (pin?.style === 'pin') pairs.push({ icon: 'pinshape', color: pin.color });
+      if (pin?.style === 'marker') pairs.push({ icon: 'markershape', color: pin.color });
+    }
+    return pairs;
   }
 
   ensureIcons(): Promise<void> {
@@ -168,36 +181,125 @@ export class FrameApplier {
       }
     }
 
+    // Markers carry their resolved appearance as feature properties, so one
+    // source + a few data-driven layers cover every pin style.
     this.addSource('markers', {
       type: 'geojson',
       promoteId: 'id',
       data: {
         type: 'FeatureCollection',
-        features: this.project.markers.map((m) => ({
-          type: 'Feature' as const,
-          id: m.id,
-          properties: { id: m.id, label: m.label ?? '' },
-          geometry: { type: 'Point' as const, coordinates: m.coordinate },
-        })),
+        features: this.project.markers.map((m) => {
+          const pin = m.pin ?? DEFAULT_PIN;
+          return {
+            type: 'Feature' as const,
+            id: m.id,
+            properties: {
+              id: m.id,
+              label: m.label ?? '',
+              style: pin.style,
+              color: pin.color,
+              size: pin.size,
+              showLabel: pin.showLabel ? 1 : 0,
+              emoji: pin.emoji ?? '',
+              sprite:
+                pin.style === 'pin'
+                  ? vehicleImageId('pinshape', pin.color)
+                  : pin.style === 'marker'
+                    ? vehicleImageId('markershape', pin.color)
+                    : pin.style === 'image'
+                      ? markerImageId(m.id)
+                      : '',
+              bubble: m.label ?? '',
+            },
+            geometry: { type: 'Point' as const, coordinates: m.coordinate },
+          };
+        }),
       },
     });
+
+    // Dot style.
     this.addLayer({
       id: 'marker-dots',
       type: 'circle',
       source: 'markers',
+      filter: ['==', ['get', 'style'], 'dot'],
       paint: {
-        'circle-color': '#ffd43b',
+        'circle-color': ['coalesce', ['get', 'color'], '#ffd43b'],
         'circle-stroke-color': '#0e1726',
         'circle-stroke-width': 2,
-        'circle-radius': ['*', 7, ['coalesce', ['feature-state', 'scale'], 0]],
+        'circle-radius': [
+          '*',
+          ['*', 7, ['coalesce', ['get', 'size'], 1]],
+          ['coalesce', ['feature-state', 'scale'], 0],
+        ],
         'circle-opacity': ['coalesce', ['feature-state', 'opacity'], 0],
         'circle-stroke-opacity': ['coalesce', ['feature-state', 'opacity'], 0],
       },
     });
+
+    // Pin / marker / image styles all render as a bottom-anchored sprite.
+    this.addLayer({
+      id: 'marker-sprites',
+      type: 'symbol',
+      source: 'markers',
+      filter: ['in', ['get', 'style'], ['literal', ['pin', 'marker', 'image']]],
+      layout: {
+        'icon-image': ['get', 'sprite'],
+        // Size comes from a feature PROPERTY, not feature-state: MapLibre
+        // rejects feature-state in layout properties, and icon-size is
+        // layout. So sprite pins animate in on opacity alone (a paint
+        // property) rather than the scale-pop the dot style uses.
+        'icon-size': ['*', 0.5, ['coalesce', ['get', 'size'], 1]],
+        'icon-anchor': 'bottom',
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      },
+      paint: { 'icon-opacity': ['coalesce', ['feature-state', 'opacity'], 0] },
+    });
+
+    // Emoji renders as text — no sprite rasterisation needed.
+    this.addLayer({
+      id: 'marker-emoji',
+      type: 'symbol',
+      source: 'markers',
+      filter: ['==', ['get', 'style'], 'emoji'],
+      layout: {
+        'text-field': ['get', 'emoji'],
+        'text-font': [theme.font],
+        'text-size': ['*', 28, ['coalesce', ['get', 'size'], 1]],
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+      },
+      paint: { 'text-opacity': ['coalesce', ['feature-state', 'opacity'], 0] },
+    });
+
+    // Bubble: the name inside a rounded badge, so no separate label.
+    this.addLayer({
+      id: 'marker-bubbles',
+      type: 'symbol',
+      source: 'markers',
+      filter: ['==', ['get', 'style'], 'bubble'],
+      layout: {
+        'text-field': ['get', 'bubble'],
+        'text-font': [theme.font],
+        'text-size': ['*', 14, ['coalesce', ['get', 'size'], 1]],
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+        'text-padding': 0,
+      },
+      paint: {
+        'text-color': '#ffffff',
+        'text-halo-color': ['coalesce', ['get', 'color'], '#e8590c'],
+        'text-halo-width': 2.5,
+        'text-opacity': ['coalesce', ['feature-state', 'opacity'], 0],
+      },
+    });
+
     this.addLayer({
       id: 'marker-labels',
       type: 'symbol',
       source: 'markers',
+      filter: ['==', ['get', 'showLabel'], 1],
       layout: {
         'text-field': ['get', 'label'],
         'text-font': [theme.font],
@@ -304,11 +406,11 @@ import type maplibregl from 'maplibre-gl';
  */
 function isOwnedLayer(id: string): boolean {
   return (
+    id.startsWith('marker-') ||
     id.startsWith('route-line-') ||
     id.startsWith('route-head-') ||
     id.startsWith('route-vehicle-') ||
-    id === 'marker-dots' ||
-    id === 'marker-labels'
+    false
   );
 }
 

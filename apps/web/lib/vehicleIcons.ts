@@ -22,7 +22,22 @@ type IconBuilder = (color: string) => string;
 const stroke = (d: string, color: string, width = 6) =>
   `<path d="${d}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`;
 
+const PIN_ICONS: Record<string, IconBuilder> = {
+  // Drawn with the point at the BOTTOM of the viewbox so the sprite can be
+  // bottom-anchored on its coordinate, the way a real map pin sits.
+  pinshape: (c) => `
+    <path d="M32 62 C32 62 54 36 54 24 A22 22 0 1 0 10 24 C10 36 32 62 32 62 Z"
+      fill="${c}" stroke="rgba(0,0,0,0.35)" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="32" cy="24" r="8" fill="rgba(255,255,255,0.9)"/>`,
+  markershape: (c) => `
+    <path d="M32 62 L20 34 A14 14 0 1 1 44 34 Z"
+      fill="${c}" stroke="rgba(0,0,0,0.4)" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="32" cy="24" r="10" fill="${c}" stroke="rgba(0,0,0,0.4)" stroke-width="2"/>
+    <circle cx="32" cy="24" r="4.5" fill="rgba(255,255,255,0.95)"/>`,
+};
+
 const ICONS: Record<string, IconBuilder> = {
+  ...PIN_ICONS,
   plane: (c) => `
     <path d="M32 4 L38 26 L60 36 L60 42 L38 37 L37 52 L44 57 L44 60 L32 57 L20 60 L20 57 L27 52 L26 37 L4 42 L4 36 L26 26 Z"
       fill="${c}" stroke="rgba(0,0,0,0.35)" stroke-width="1.5" stroke-linejoin="round"/>`,

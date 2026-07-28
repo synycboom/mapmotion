@@ -7,6 +7,7 @@ import type {
 import { greatCircleArc, distanceMeters } from './geo';
 import { simplifyLine } from './simplify';
 import { buildTitleCards } from './title';
+import { resolvePin, type PinAppearance } from './pins';
 import {
   migrateLegacyMode,
   travelMode,
@@ -63,6 +64,10 @@ export interface TripOptions {
   legDurations?: readonly (number | null | undefined)[];
   /** Per-stop dwell in ms; `null`/absent uses the global dwellMs. */
   stopDwells?: readonly (number | null | undefined)[];
+  /** Default marker appearance for every stop. */
+  pin?: Partial<PinAppearance>;
+  /** Per-stop marker overrides, indexed like `stops`. */
+  pinOverrides?: readonly (Partial<PinAppearance> | null | undefined)[];
   /** Intro/outro card text. Omit or leave blank for no titles. */
   title?: string | null;
   subtitle?: string | null;
@@ -104,7 +109,7 @@ export function compileTrip(
   // Opening: camera on first stop, marker pops immediately.
   const first = stops[0]!;
   camera.push({ tMs: 0, camera: cam(first.coordinate, stopZoom, bearing, pitch) });
-  markers.push(marker(0, first, 200));
+  markers.push(marker(0, first, 200, resolvePin(opts.pin, opts.pinOverrides?.[0] ?? undefined)));
   t += dwellFor(0);
 
   for (let i = 1; i < stops.length; i++) {
@@ -157,7 +162,7 @@ export function compileTrip(
 
     t += legMs;
     camera.push({ tMs: t, camera: cam(to.coordinate, stopZoom, bearing, pitch), easing: 'easeInOutCubic' });
-    markers.push(marker(i, to, t - 150));
+    markers.push(marker(i, to, t - 150, resolvePin(opts.pin, opts.pinOverrides?.[i] ?? undefined)));
     t += dwellFor(i);
   }
 
@@ -201,11 +206,17 @@ function cam(center: LngLat, zoom: number, bearing = 0, pitch = 0) {
   return { center: [...center] as LngLat, zoom, bearing, pitch };
 }
 
-function marker(i: number, stop: TripStop, enterMs: number) {
+function marker(
+  i: number,
+  stop: TripStop,
+  enterMs: number,
+  pin: PinAppearance,
+) {
   return {
     id: `marker-${i}`,
     coordinate: [...stop.coordinate] as LngLat,
     label: stop.name,
+    pin,
     enterMs,
     enterDurationMs: 450,
   };
