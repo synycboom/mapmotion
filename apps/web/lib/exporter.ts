@@ -4,10 +4,13 @@ import { drawTitles } from './drawTitles';
 import type { FrameApplier } from './applyFrame';
 import { Muxer as Mp4Muxer, ArrayBufferTarget as Mp4Target } from 'mp4-muxer';
 import { Muxer as WebmMuxer, ArrayBufferTarget as WebmTarget } from 'webm-muxer';
+import { GIFEncoder, quantize, applyPalette } from 'gifenc';
+
+export type ExportFormat = 'video' | 'gif';
 
 export interface ExportResult {
   blob: Blob;
-  ext: 'mp4' | 'webm';
+  ext: 'mp4' | 'webm' | 'gif';
   codec: string;
   frames: number;
   wallMs: number;
@@ -16,6 +19,10 @@ export interface ExportResult {
 }
 
 export interface ExportOptions {
+  /** 'video' (H.264/VP9) or 'gif'. */
+  format?: ExportFormat;
+  /** GIF only: cap the frame rate, since GIF at 30fps is enormous. */
+  gifFps?: number;
   watermark?: string;
   /** Attribution line composited into every frame (OSM license requires it). */
   attribution?: string;
@@ -45,6 +52,8 @@ export async function exportVideo(
   project: Project,
   opts: ExportOptions = {},
 ): Promise<ExportResult> {
+  if (opts.format === 'gif') return exportGif(map, applier, project, opts);
+
   const { width, height, fps, durationMs } = project.format;
   const totalFrames = Math.max(1, Math.round((durationMs / 1000) * fps));
 
@@ -240,4 +249,77 @@ function drawOverlays(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * GIF export.
+ *
+ * Shares the identical deterministic frame-stepping and compositing as the
+ * video path — the only difference is the encoder. GIF is capped to a lower
+ * frame rate by default because the format stores full palettised frames:
+ * 30fps GIF is enormous and no better to look at than 12–15fps.
+ */
+async function exportGif(
+  map: MLMap,
+  applier: FrameApplier,
+  project: Project,
+  opts: ExportOptions,
+): Promise<ExportResult> {
+  const { width, height, fps, durationMs } = project.format;
+  const gifFps = Math.min(fps, Math.max(2, opts.gifFps ?? 12));
+  // Step through the source timeline at the GIF's own rate.
+  const totalFrames = Math.max(1, Math.round((durationMs / 1000) * gifFps));
+  const delayMs = Math.round(1000 / gifFps);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  const mapCanvas = map.getCanvas();
+
+  const encoder = GIFEncoder();
+  const t0 = performance.now();
+  const settleCapMs = opts.settleCapMs ?? 900;
+
+  await applier.ensureIcons();
+  applier.apply(sceneAt(project, 0));
+  await settle(map, Math.max(4000, settleCapMs * 3));
+
+  for (let i = 0; i < totalFrames; i++) {
+    if (opts.signal?.aborted) throw new Error('export aborted');
+
+    const tMs = (i / gifFps) * 1000;
+    const frame = sceneAt(project, tMs);
+    applier.apply(frame);
+    await settle(map, settleCapMs);
+
+    ctx.drawImage(mapCanvas, 0, 0, width, height);
+    drawTitles(ctx, frame.titles, width, height);
+    drawOverlays(ctx, width, height, opts.watermark, opts.attribution);
+
+    const { data } = ctx.getImageData(0, 0, width, height);
+    // Per-frame palette: maps change colour a lot across a fly-through, and
+    // a single global palette would band badly.
+    const palette = quantize(data, 256, { format: 'rgb565' });
+    const indexed = applyPalette(data, palette, 'rgb565');
+    encoder.writeFrame(indexed, width, height, { palette, delay: delayMs });
+
+    opts.onProgress?.(i + 1, totalFrames);
+    // Yield so the progress UI can paint.
+    if (i % 4 === 0) await sleep(0);
+  }
+
+  encoder.finish();
+  const bytes = encoder.bytes();
+  const wallMs = performance.now() - t0;
+
+  return {
+    blob: new Blob([bytes.slice().buffer as ArrayBuffer], { type: 'image/gif' }),
+    ext: 'gif',
+    codec: `gif-${gifFps}fps`,
+    frames: totalFrames,
+    wallMs,
+    msPerFrame: wallMs / totalFrames,
+    realtimeFactor: wallMs / durationMs,
+  };
 }

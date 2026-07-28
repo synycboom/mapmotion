@@ -16,7 +16,7 @@ import {
   type TripStop,
 } from '@mapmotion/engine';
 import { FrameApplier } from '../lib/applyFrame';
-import { exportVideo, type ExportResult } from '../lib/exporter';
+import { exportVideo, type ExportFormat, type ExportResult } from '../lib/exporter';
 import { STYLES, getStyle, customStyle, type StyleDef } from '../lib/styles';
 import {
   DEFAULT_APPEARANCE,
@@ -94,6 +94,7 @@ export default function Editor() {
   });
   const [libraryKey, setLibraryKey] = useState(0);
   const [savedAs, setSavedAs] = useState<string | null>(null);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('video');
   const [format, setFormat] = useState<FormatId>('16x9');
   const [speed, setSpeed] = useState(1);
   const [res, setRes] = useState(1);
@@ -561,6 +562,7 @@ export default function Editor() {
     try {
       const s = styleRef.current;
       const res = await exportVideo(map, applier, proj, {
+        format: exportFormat,
         watermark: 'MAPMOTION',
         attribution: s.attribution,
         settleCapMs: s.settleCapMs,
@@ -1062,12 +1064,35 @@ export default function Editor() {
           <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 13, opacity: 0.7 }}>
             {(playheadMs / 1000).toFixed(1)}s / {(dur / 1000).toFixed(1)}s
           </span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['video', 'gif'] as const).map((f) => (
+              <button
+                key={f}
+                data-testid={`export-format-${f}`}
+                onClick={() => setExportFormat(f)}
+                disabled={exporting}
+                title={f === 'gif' ? 'Animated GIF — smaller frame rate, no audio' : 'MP4 / WebM video'}
+                style={{
+                  ...btn,
+                  padding: '8px 10px',
+                  fontSize: 11,
+                  background: exportFormat === f ? '#34496b' : '#1c2a42',
+                  borderColor: exportFormat === f ? '#4a6592' : '#34496b',
+                }}
+              >
+                {f === 'video' ? 'MP4' : 'GIF'}
+              </button>
+            ))}
+          </div>
           <button
             onClick={runExport}
+            data-testid="export-button"
             disabled={!ready || exporting || !project}
             style={{ ...btn, background: '#e8590c', borderColor: '#e8590c' }}
           >
-            {exporting ? `Exporting ${(progress * 100).toFixed(0)}%` : 'Export video'}
+            {exporting
+              ? `Exporting ${(progress * 100).toFixed(0)}%`
+              : `Export ${exportFormat === 'gif' ? 'GIF' : 'video'}`}
           </button>
         </div>
 

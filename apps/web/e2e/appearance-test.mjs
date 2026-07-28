@@ -7,8 +7,8 @@ import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { startMockTileServer } from './mock-tileserver.mjs';
 
-const APP_PORT = 3210;
-const TILE_PORT = 3211;
+const APP_PORT = 3240;
+const TILE_PORT = 3241;
 const exe = [
   '/opt/pw-browsers/chromium/chrome-linux/chrome',
   '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',

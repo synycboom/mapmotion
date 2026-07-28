@@ -86,4 +86,5 @@ xvfb-run -a node apps/web/e2e/studio-test.mjs          # Studio timeline + retim
 xvfb-run -a node apps/web/e2e/vehicles-test.mjs        # travel modes + moving vehicles
 xvfb-run -a node apps/web/e2e/appearance-test.mjs      # label toggles, projection, tilt, terrain
 xvfb-run -a node apps/web/e2e/pins-test.mjs            # marker styles
+xvfb-run -a node apps/web/e2e/gif-test.mjs             # GIF export
 ```
