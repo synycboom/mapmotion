@@ -1098,6 +1098,9 @@ export default function Editor() {
             width: dims.width * scale,
             height: dims.height * scale,
             maxWidth: '100%',
+            // A vertical format on a phone leaves slack on both sides; hugging
+            // the left edge looks like a bug rather than a choice.
+            marginInline: narrow ? 'auto' : undefined,
             overflow: 'hidden',
             borderRadius: 8,
             border: '1px solid #223',
