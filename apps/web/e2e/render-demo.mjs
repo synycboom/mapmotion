@@ -13,8 +13,13 @@ const exe = [
 const server = spawn('npx', ['next', 'start', '-p', String(PORT)], {
   cwd: new URL('..', import.meta.url).pathname,
   stdio: 'ignore',
+  detached: true,
 });
-process.on('exit', () => { try { server.kill('SIGTERM'); } catch {} });
+process.on('exit', () => {
+  // Kill the process GROUP: npx forks a next-server that would otherwise
+  // outlive us and hold the port.
+  try { process.kill(-server.pid, 'SIGKILL'); } catch { try { server.kill('SIGKILL'); } catch {} }
+});
 
 for (let i = 0; i < 60; i++) {
   try { if ((await fetch(`http://localhost:${PORT}/`)).ok) break; } catch {}

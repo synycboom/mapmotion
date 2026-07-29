@@ -23,13 +23,24 @@ const pass = (k) => { checks[k] = true; console.log(`  ✓ ${k}`); };
 const fail = (k, d) => { checks[k] = false; console.log(`  ✗ ${k}${d ? `: ${d}` : ''}`); };
 
 const { server: router } = await startMockRouter(ROUTER_PORT, 'ok');
+const killTree = (child) => {
+  // `npx next start` forks a `next-server` grandchild. Killing only the npx
+  // wrapper leaves that grandchild alive holding the port — and because it
+  // keeps serving from a `.next` directory a later build has since
+  // overwritten, it answers the NEXT run with HTML pointing at chunk files
+  // that no longer exist ("Loading chunk N failed"). Detaching puts it in its
+  // own process group so the whole tree can be signalled at once.
+  try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
+};
+
 const app = spawn('npx', ['next', 'start', '-p', String(APP_PORT)], {
   cwd: new URL('..', import.meta.url).pathname,
   stdio: 'ignore',
+  detached: true,
   env: { ...process.env, ROUTER_URL: `http://localhost:${ROUTER_PORT}/route/v1/driving` },
 });
 const cleanup = () => {
-  try { app.kill('SIGTERM'); } catch {}
+  killTree(app);
   try { router.close(); } catch {}
 };
 process.on('exit', cleanup);

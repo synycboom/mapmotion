@@ -19,16 +19,27 @@ if (!exe) {
 }
 
 // Start the production server.
+const killTree = (child) => {
+  // `npx next start` forks a `next-server` grandchild. Killing only the npx
+  // wrapper leaves that grandchild alive holding the port — and because it
+  // keeps serving from a `.next` directory a later build has since
+  // overwritten, it answers the NEXT run with HTML pointing at chunk files
+  // that no longer exist ("Loading chunk N failed"). Detaching puts it in its
+  // own process group so the whole tree can be signalled at once.
+  try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
+};
+
 const server = spawn('npx', ['next', 'start', '-p', String(PORT)], {
   cwd: new URL('..', import.meta.url).pathname,
   stdio: 'pipe',
+  detached: true,
 });
 server.stdout.on('data', (d) => process.stdout.write(`[next] ${d}`));
 server.stderr.on('data', (d) => process.stderr.write(`[next] ${d}`));
 
 const kill = () => {
   try {
-    server.kill('SIGTERM');
+    killTree(server);
   } catch {}
 };
 process.on('exit', kill);

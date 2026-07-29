@@ -13,11 +13,22 @@ const exe = [
   '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
 ].find((p) => existsSync(p));
 
+const killTree = (child) => {
+  // `npx next start` forks a `next-server` grandchild. Killing only the npx
+  // wrapper leaves that grandchild alive holding the port — and because it
+  // keeps serving from a `.next` directory a later build has since
+  // overwritten, it answers the NEXT run with HTML pointing at chunk files
+  // that no longer exist ("Loading chunk N failed"). Detaching puts it in its
+  // own process group so the whole tree can be signalled at once.
+  try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
+};
+
 const app = spawn('npx', ['next', 'start', '-p', String(PORT)], {
   cwd: new URL('..', import.meta.url).pathname,
   stdio: 'ignore',
+  detached: true,
 });
-const cleanup = () => { try { app.kill('SIGTERM'); } catch {} };
+const cleanup = () => { killTree(app); };
 process.on('exit', cleanup);
 
 for (let i = 0; i < 60; i++) {
