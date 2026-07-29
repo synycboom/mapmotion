@@ -19,13 +19,22 @@ export function durationOf(file) {
   }
 }
 
-export function rawStats(file, { frameSelect = null, w = 160, h = 90 } = {}) {
+export function rawStats(
+  file,
+  { frameSelect = null, w = 160, h = 90, crop = null } = {},
+) {
   const args = ['-v', 'error'];
   if (frameSelect !== null) args.push('-ss', String(frameSelect));
+  const filters = [];
+  if (crop && crop.w > 1 && crop.h > 1) {
+    const r = (n) => Math.max(0, Math.round(n));
+    filters.push(`crop=${r(crop.w)}:${r(crop.h)}:${r(crop.x ?? 0)}:${r(crop.y ?? 0)}`);
+  }
+  filters.push(`scale=${w}:${h}`);
   args.push(
     '-i', file,
     '-frames:v', '1',
-    '-vf', `scale=${w}:${h}`,
+    '-vf', filters.join(','),
     '-pix_fmt', 'rgb24',
     '-f', 'rawvideo',
     'pipe:1',
@@ -56,4 +65,27 @@ export function rawStats(file, { frameSelect = null, w = 160, h = 90 } = {}) {
     stddev: Math.round(stddev * 10) / 10,
     top,
   };
+}
+
+/**
+ * Colour statistics for a rectangle of a PNG screenshot.
+ *
+ * Screenshots are in DEVICE pixels while `getBoundingClientRect()` is in CSS
+ * pixels, so the rect has to be scaled by the device pixel ratio or the crop
+ * lands somewhere else entirely — on a 3× iPhone profile it would sample the
+ * top-left ninth of the intended region and quietly pass or fail for the
+ * wrong reason.
+ */
+export function pngStats(file, rect = null, dpr = 1) {
+  const crop = rect
+    ? { x: rect.x * dpr, y: rect.y * dpr, w: rect.w * dpr, h: rect.h * dpr }
+    : null;
+  try {
+    return rawStats(file, { crop });
+  } catch (e) {
+    // A collapsed or off-canvas rect makes ffmpeg's crop filter throw. That
+    // IS the failure the caller is testing for, so report it as an empty
+    // region rather than exploding and taking the whole suite with it.
+    return { distinctColors: 0, meanLuma: 0, stddev: 0, top: [], error: String(e.message ?? e).slice(0, 120) };
+  }
 }

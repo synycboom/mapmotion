@@ -44,6 +44,7 @@ import {
 } from '../lib/mapAppearance';
 import { saveProject, type SavedProject } from '../lib/projectLibrary';
 import { Timeline } from '../components/Timeline';
+import { useNarrow, usePreviewFit } from '../lib/responsive';
 
 declare global {
   interface Window {
@@ -112,9 +113,23 @@ export default function Editor() {
   const [error, setError] = useState<string | null>(null);
   const [mapErrors, setMapErrors] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
-  const [scale, setScale] = useState(0.5);
+  const [contextLost, setContextLost] = useState(false);
   /** Lets the map's style.load handler reach the latest appearance. */
   const applyAppearanceRef = useRef<(() => void) | null>(null);
+
+  // ---- responsive layout ----
+  const narrow = useNarrow();
+  const previewRef = useRef<HTMLElement>(null);
+  const fitDims = scaledDims(format, res);
+  // Stacked, the preview gets half the screen and the controls scroll under
+  // it. Side by side, it gets the window minus the transport row.
+  const scale = usePreviewFit(
+    previewRef,
+    fitDims.width,
+    fitDims.height,
+    narrow ? 0.52 : 1,
+    narrow ? 24 : 210,
+  );
 
   // Road geometry for any leg set to 'drive'. Missing/failed lookups come
   // back as null and compileTrip arcs instead.
@@ -245,6 +260,24 @@ export default function Editor() {
       });
       mapRef.current = map;
       window.__map = map;
+
+      // iOS Safari discards WebGL contexts under memory pressure and when a
+      // tab is backgrounded for a while. Without preventDefault the browser
+      // will not restore it, and the user is left with a permanently blank
+      // map and no explanation.
+      const canvas = map.getCanvas();
+      canvas.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+        setContextLost(true);
+      });
+      canvas.addEventListener('webglcontextrestored', () => {
+        setContextLost(false);
+        // Layers live in the lost context; reinstall them and repaint.
+        applierRef.current = null;
+        rebuildLayers();
+        applyAppearanceRef.current?.();
+        seek(playheadRef.current);
+      });
 
       map.on('error', (e) => {
         const msg = (e as { error?: Error }).error?.message ?? String(e);
@@ -418,18 +451,6 @@ export default function Editor() {
     setCopied(false);
   }, [stops, legModes, appearance, format, styleId, speed, res, booted]);
 
-  // ---- fit the preview to the viewport ----
-  useEffect(() => {
-    const out = scaledDims(format, res);
-    const fit = () => {
-      const vw = window.innerWidth - 400;
-      const vh = window.innerHeight - 210;
-      setScale(Math.min(vw / out.width, vh / out.height, 1));
-    };
-    fit();
-    window.addEventListener('resize', fit);
-    return () => window.removeEventListener('resize', fit);
-  }, [format, res]);
 
   const runAutotest = async (map: maplibregl.Map) => {
     try {
@@ -729,9 +750,26 @@ export default function Editor() {
   const dur = project?.format.durationMs ?? 1;
 
   return (
-    <main style={{ padding: 20, display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+    <main
+      style={{
+        padding: narrow ? 12 : 20,
+        display: 'flex',
+        flexDirection: narrow ? 'column' : 'row',
+        gap: narrow ? 14 : 20,
+        alignItems: 'flex-start',
+      }}
+    >
       {/* ---------------- Quick mode panel ---------------- */}
-      <aside style={{ width: 340, flexShrink: 0 }}>
+      {/* Stacked, the preview goes first — it's the thing you came to see. */}
+      <aside
+        data-testid="controls"
+        style={{
+          width: narrow ? '100%' : 340,
+          flexShrink: 0,
+          order: narrow ? 2 : 0,
+          minWidth: 0,
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
           <h1 style={{ margin: 0, fontSize: 18 }}>Mapmotion</h1>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
@@ -972,12 +1010,23 @@ export default function Editor() {
       </aside>
 
       {/* ---------------- Preview + transport ---------------- */}
-      <section style={{ flex: 1, minWidth: 0 }}>
+      <section
+        ref={previewRef}
+        data-testid="preview-pane"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          width: narrow ? '100%' : undefined,
+          order: narrow ? 1 : 0,
+        }}
+      >
         <div
+          data-testid="preview-frame"
           style={{
             position: 'relative',
             width: dims.width * scale,
             height: dims.height * scale,
+            maxWidth: '100%',
             overflow: 'hidden',
             borderRadius: 8,
             border: '1px solid #223',
@@ -990,6 +1039,8 @@ export default function Editor() {
               height: dims.height,
               transform: `scale(${scale})`,
               transformOrigin: 'top left',
+              // The map is non-interactive, so touches belong to the page.
+              touchAction: 'pan-y',
             }}
           />
           <canvas
@@ -1033,15 +1084,34 @@ export default function Editor() {
               {!project ? 'Add at least two stops to build an animation.' : 'Loading style…'}
             </div>
           )}
+          {contextLost && (
+            <div
+              data-testid="context-lost"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'grid',
+                placeItems: 'center',
+                background: 'rgba(9,15,26,0.85)',
+                fontSize: 13,
+                textAlign: 'center',
+                padding: 20,
+              }}
+            >
+              The browser dropped the map&apos;s graphics context — usually low
+              memory. It should come back on its own; reload if it doesn&apos;t.
+            </div>
+          )}
         </div>
 
         <div
           style={{
             display: 'flex',
-            gap: 12,
+            flexWrap: 'wrap',
+            gap: narrow ? 8 : 12,
             alignItems: 'center',
             marginTop: 14,
-            width: dims.width * scale,
+            width: narrow ? '100%' : dims.width * scale,
             maxWidth: '100%',
           }}
         >
@@ -1059,7 +1129,7 @@ export default function Editor() {
               setPlaying(false);
               seek(Number(e.target.value));
             }}
-            style={{ flex: 1 }}
+            style={{ flex: 1, minWidth: 110 }}
           />
           <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 13, opacity: 0.7 }}>
             {(playheadMs / 1000).toFixed(1)}s / {(dur / 1000).toFixed(1)}s
