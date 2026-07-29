@@ -41,6 +41,12 @@ export interface CameraKeyframe {
   camera: CameraState;
   /** Easing applied on the segment ENDING at this keyframe. */
   easing?: EasingId;
+  /**
+   * van Wijk rho for the segment ENDING at this keyframe — how high the
+   * camera arcs. Same "belongs to the incoming segment" convention as
+   * `easing`, so a keyframe fully describes how you arrive at it.
+   */
+  rho?: number;
 }
 
 export interface VehicleConfig {

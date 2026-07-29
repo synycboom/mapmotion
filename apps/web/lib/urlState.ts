@@ -1,4 +1,17 @@
-import { codeToMode, modeToCode, type LegMode, type TripStop } from '@mapmotion/engine';
+import {
+  ARC,
+  clampArc,
+  clampOrbit,
+  clampZoom,
+  codeToMode,
+  isBearingMode,
+  modeToCode,
+  zoomPreset,
+  type BearingMode,
+  type EasingId,
+  type LegMode,
+  type TripStop,
+} from '@mapmotion/engine';
 
 /**
  * Project state <-> URL. Lets a map be linked, bookmarked and reloaded with
@@ -34,9 +47,63 @@ export const DEFAULT_APPEARANCE: MapAppearance = {
 
 const LABEL_ORDER = ['places', 'countries', 'roads', 'water', 'pois'] as const;
 
+/** Easings offered in the UI, in the order they're shown. */
+export const EASING_CHOICES: readonly { id: EasingId; label: string }[] = [
+  { id: 'easeInOutCubic', label: 'Smooth' },
+  { id: 'easeInOutSine', label: 'Gentle' },
+  { id: 'easeOutCubic', label: 'Snap out' },
+  { id: 'easeInCubic', label: 'Ramp up' },
+  { id: 'linear', label: 'Constant' },
+];
+
+const EASING_CODES: Record<EasingId, string> = {
+  easeInOutCubic: 'c',
+  easeInOutSine: 's',
+  easeOutCubic: 'o',
+  easeInCubic: 'i',
+  linear: 'l',
+};
+
+function easingFromCode(code: string | null): EasingId | null {
+  const hit = (Object.keys(EASING_CODES) as EasingId[]).find(
+    (k) => EASING_CODES[k] === code,
+  );
+  return hit ?? null;
+}
+
+/** How the camera frames, moves and turns. */
+export interface CameraSettings {
+  /** A ZOOM_PRESETS id, or 'auto' to derive framing from the trip. */
+  zoomPreset: string;
+  /** van Wijk rho — how high the camera arcs between stops. */
+  arc: number;
+  bearingMode: BearingMode;
+  /** Rotation in degrees; an offset on top of the heading in 'travel' mode. */
+  bearing: number;
+  /** Degrees the camera turns around each stop during its dwell. */
+  orbit: number;
+  easing: EasingId;
+  /** Per-stop zoom override, parallel to stops. `null` = use the preset. */
+  stopZooms: (number | null)[];
+}
+
+export const DEFAULT_CAMERA: CameraSettings = {
+  zoomPreset: 'auto',
+  arc: ARC.default,
+  bearingMode: 'fixed',
+  bearing: 0,
+  orbit: 0,
+  easing: 'easeInOutCubic',
+  stopZooms: [],
+};
+
+const STOP_ZOOM_SEP = '_';
+const STOP_ZOOM_AUTO = '-';
+
 export interface UrlState {
   stops: TripStop[];
   appearance: MapAppearance;
+  camera: CameraSettings;
   /** Per-leg travel mode; length is stops.length - 1. */
   legModes: LegMode[];
   format: FormatId;
@@ -92,6 +159,27 @@ export function encodeState(s: UrlState): string {
   if (a.projection !== 'mercator') params.set('prj', a.projection);
   if (a.terrain) params.set('ter', '1');
   if (a.pitch !== 0) params.set('pit', String(Math.round(a.pitch)));
+
+  // Camera. Every one of these is omitted at its default so a plain trip link
+  // stays short and readable.
+  const c = s.camera;
+  if (c.zoomPreset !== DEFAULT_CAMERA.zoomPreset) params.set('zm', c.zoomPreset);
+  if (Math.abs(c.arc - DEFAULT_CAMERA.arc) > 1e-6) params.set('arc', c.arc.toFixed(2));
+  if (c.bearingMode !== 'fixed') params.set('bm', c.bearingMode);
+  if (c.bearing !== 0) params.set('brg', String(Math.round(c.bearing)));
+  if (c.orbit !== 0) params.set('orb', String(Math.round(c.orbit)));
+  if (c.easing !== DEFAULT_CAMERA.easing) params.set('ez', EASING_CODES[c.easing]);
+  // Per-stop zooms are only worth the URL bytes when at least one is set.
+  const zooms = c.stopZooms.slice(0, s.stops.length);
+  if (zooms.some((z) => z !== null && z !== undefined)) {
+    params.set(
+      'sz',
+      Array.from({ length: s.stops.length }, (_, i) => {
+        const z = zooms[i];
+        return z === null || z === undefined ? STOP_ZOOM_AUTO : z.toFixed(1);
+      }).join(STOP_ZOOM_SEP),
+    );
+  }
 
   params.set('f', s.format);
   params.set('style', s.styleId);
@@ -149,6 +237,38 @@ export function decodeState(
         : fallback.appearance?.pitch ?? 0,
   };
 
+  // ---- camera ----
+  // Everything here comes from a URL a stranger can edit, so each field is
+  // validated or clamped and falls back to the default rather than reaching
+  // MapLibre as NaN.
+  const presetParam = p.get('zm');
+  const bearingRaw = Number(p.get('brg'));
+  const orbitRaw = Number(p.get('orb'));
+  const arcRaw = Number(p.get('arc'));
+  const bmRaw = p.get('bm');
+  const base = fallback.camera ?? DEFAULT_CAMERA;
+
+  const szRaw = p.get('sz');
+  const stopZooms: (number | null)[] = szRaw
+    ? szRaw.split(STOP_ZOOM_SEP).map((chunk) => {
+        if (chunk === STOP_ZOOM_AUTO || chunk === '') return null;
+        const n = Number(chunk);
+        return Number.isFinite(n) ? clampZoom(n) : null;
+      })
+    : base.stopZooms;
+
+  const camera: CameraSettings = {
+    // An unknown preset id resolves to 'auto' rather than silently framing
+    // everything at zoom 5.
+    zoomPreset: presetParam ? zoomPreset(presetParam).id : base.zoomPreset,
+    arc: p.has('arc') ? clampArc(arcRaw) : base.arc,
+    bearingMode: isBearingMode(bmRaw) ? (bmRaw as BearingMode) : base.bearingMode,
+    bearing: Number.isFinite(bearingRaw) ? ((bearingRaw % 360) + 360) % 360 : base.bearing,
+    orbit: p.has('orb') ? clampOrbit(orbitRaw) : base.orbit,
+    easing: easingFromCode(p.get('ez')) ?? base.easing,
+    stopZooms,
+  };
+
   const f = p.get('f');
   const format: FormatId =
     f && f in FORMATS ? (f as FormatId) : fallback.format;
@@ -162,6 +282,7 @@ export function decodeState(
   return {
     stops,
     appearance,
+    camera,
     legModes,
     format,
     styleId: p.get('style') ?? fallback.styleId,

@@ -1,10 +1,20 @@
 import type {
   CameraKeyframe,
+  EasingId,
   LngLat,
   Project,
   ProjectFormat,
 } from './types';
 import { greatCircleArc, distanceMeters } from './geo';
+import {
+  autoStopZooms,
+  clampArc,
+  clampOrbit,
+  clampZoom,
+  travelBearings,
+  zoomPreset,
+  type BearingMode,
+} from './framing';
 import { simplifyLine } from './simplify';
 import { buildTitleCards } from './title';
 import { resolvePin, type PinAppearance } from './pins';
@@ -29,12 +39,44 @@ export type LegMode = TravelMode;
 
 export interface TripOptions {
   format?: Partial<ProjectFormat>;
-  /** Zoom used when hovering over a stop. */
+  /**
+   * Zoom used when hovering over a stop. Ignored when `zoomPreset` is set.
+   * Kept for saved projects and for callers that want one explicit number.
+   */
   stopZoom?: number;
+  /**
+   * Named framing: a preset id from ZOOM_PRESETS, or 'auto' to derive each
+   * stop's zoom from how far its nearest neighbour is.
+   */
+  zoomPreset?: string;
+  /** Per-stop zoom override; `null`/absent falls back to the preset. */
+  stopZooms?: readonly (number | null | undefined)[];
   /** Camera tilt in degrees applied to every keyframe (0 = straight down). */
   pitch?: number;
+  /** Per-stop tilt override. */
+  stopPitches?: readonly (number | null | undefined)[];
   /** Camera rotation in degrees applied to every keyframe. */
   bearing?: number;
+  /** Per-stop rotation override; wins over `bearingMode`. */
+  stopBearings?: readonly (number | null | undefined)[];
+  /**
+   * 'fixed' keeps `bearing` throughout; 'travel' turns the map so the
+   * direction of travel points up the screen, rotating during each dwell.
+   */
+  bearingMode?: BearingMode;
+  /**
+   * van Wijk rho — how high the camera arcs on every travel leg. 1.42 is the
+   * MapLibre default; higher pulls further out before coming back down.
+   */
+  arc?: number;
+  /** Degrees the camera rotates around each stop during its dwell. */
+  orbitDeg?: number;
+  /** Per-stop orbit override. */
+  stopOrbits?: readonly (number | null | undefined)[];
+  /** Easing for every travel leg. */
+  travelEasing?: EasingId;
+  /** Per-leg easing override. */
+  legEasings?: readonly (EasingId | null | undefined)[];
   /** How long the camera dwells on each stop, ms. */
   dwellMs?: number;
   /** Base travel time per leg, ms (scaled a bit by distance). */
@@ -87,13 +129,73 @@ export function compileTrip(
 ): Project {
   if (stops.length < 2) throw new Error('compileTrip needs at least 2 stops');
 
-  const stopZoom = opts.stopZoom ?? 5.2;
   // MapLibre rejects pitch above 85; clamp rather than let a bad saved
   // project throw on load.
   const pitch = Math.min(85, Math.max(0, opts.pitch ?? 0));
-  const bearing = ((opts.bearing ?? 0) % 360 + 360) % 360;
+  const bearing = norm360(opts.bearing ?? 0);
   const dwellMs = opts.dwellMs ?? 1400;
   const baseLegMs = opts.legMs ?? 2600;
+  const arc = clampArc(opts.arc);
+  const bearingMode: BearingMode = opts.bearingMode ?? 'fixed';
+
+  // ---- framing ----
+  // Framing is decided against the SHORTER output axis, so a 9:16 vertical
+  // and a 16:9 landscape frame the same trip comparably instead of the
+  // vertical one cropping the journey away.
+  const outW = opts.format?.width ?? 1920;
+  const outH = opts.format?.height ?? 1080;
+  const viewportPx = Math.min(outW, outH);
+
+  const preset = opts.zoomPreset ? zoomPreset(opts.zoomPreset) : null;
+  const autoZooms = autoStopZooms(stops, viewportPx);
+  /** Zoom the camera holds at stop i, before per-stop overrides. */
+  const baseZooms: number[] = preset
+    ? preset.zoom === null
+      ? autoZooms
+      : stops.map(() => clampZoom(preset.zoom!))
+    : stops.map(() => clampZoom(opts.stopZoom ?? 5.2));
+
+  const zoomFor = (i: number) => {
+    const override = opts.stopZooms?.[i];
+    return override === null || override === undefined || !Number.isFinite(override)
+      ? baseZooms[i]!
+      : clampZoom(override);
+  };
+
+  const pitchFor = (i: number) => {
+    const override = opts.stopPitches?.[i];
+    return override === null || override === undefined || !Number.isFinite(override)
+      ? pitch
+      : Math.min(85, Math.max(0, override));
+  };
+
+  const orbitFor = (i: number) => {
+    const override = opts.stopOrbits?.[i];
+    return clampOrbit(
+      override === null || override === undefined ? opts.orbitDeg : override,
+    );
+  };
+
+  // Heading of the leg arriving at each stop; index 0 borrows leg 0 so the
+  // opening shot is already oriented for the journey.
+  const routeBearings = travelBearings(stops);
+  /**
+   * `kind` matters only in 'travel' mode: the camera arrives facing the leg
+   * it just flew and leaves facing the next one, so the turn happens during
+   * the dwell rather than mid-flight (which reads as the map spinning).
+   */
+  const bearingFor = (i: number, kind: 'arrive' | 'depart') => {
+    const override = opts.stopBearings?.[i];
+    if (override !== null && override !== undefined && Number.isFinite(override)) {
+      return norm360(override);
+    }
+    if (bearingMode !== 'travel') return bearing;
+    const idx = kind === 'depart' ? Math.min(i + 1, routeBearings.length - 1) : i;
+    return norm360(routeBearings[idx]! + bearing);
+  };
+
+  const easingFor = (legIndex: number): EasingId =>
+    opts.legEasings?.[legIndex] ?? opts.travelEasing ?? 'easeInOutCubic';
 
   const camera: CameraKeyframe[] = [];
   const routes: Project['routes'] = [];
@@ -108,7 +210,10 @@ export function compileTrip(
 
   // Opening: camera on first stop, marker pops immediately.
   const first = stops[0]!;
-  camera.push({ tMs: 0, camera: cam(first.coordinate, stopZoom, bearing, pitch) });
+  camera.push({
+    tMs: 0,
+    camera: cam(first.coordinate, zoomFor(0), bearingFor(0, 'arrive'), pitchFor(0)),
+  });
   markers.push(marker(0, first, 200, resolvePin(opts.pin, opts.pinOverrides?.[0] ?? undefined)));
   t += dwellFor(0);
 
@@ -140,7 +245,20 @@ export function compileTrip(
     );
     const legMs = clampDuration(opts.legDurations?.[legIndex], derived);
 
-    camera.push({ tMs: t, camera: cam(from.coordinate, stopZoom, bearing, pitch), easing: 'easeInOutCubic' });
+    // Departure keyframe. The segment ENDING here is stop (i-1)'s dwell, so
+    // this is where an orbit or a turn-to-face-the-next-leg lands.
+    camera.push({
+      tMs: t,
+      camera: cam(
+        from.coordinate,
+        zoomFor(i - 1),
+        bearingFor(i - 1, 'depart') + orbitFor(i - 1),
+        pitchFor(i - 1),
+      ),
+      // A dwell is a rotation in place; sine in/out reads smoother than cubic
+      // when the camera is orbiting rather than travelling.
+      easing: 'easeInOutSine',
+    });
 
     const color = opts.legColors?.[legIndex] ?? opts.routeColor ?? '#e8590c';
     routes.push({
@@ -161,10 +279,30 @@ export function compileTrip(
     });
 
     t += legMs;
-    camera.push({ tMs: t, camera: cam(to.coordinate, stopZoom, bearing, pitch), easing: 'easeInOutCubic' });
+    camera.push({
+      tMs: t,
+      camera: cam(to.coordinate, zoomFor(i), bearingFor(i, 'arrive'), pitchFor(i)),
+      easing: easingFor(legIndex),
+      rho: arc,
+    });
     markers.push(marker(i, to, t - 150, resolvePin(opts.pin, opts.pinOverrides?.[i] ?? undefined)));
     t += dwellFor(i);
   }
+
+  // Closing keyframe so the last stop has a dwell to orbit through. Without
+  // it cameraAt just holds the arrival frame and the final stop is the only
+  // one that never moves.
+  const lastIndex = stops.length - 1;
+  camera.push({
+    tMs: t,
+    camera: cam(
+      stops[lastIndex]!.coordinate,
+      zoomFor(lastIndex),
+      bearingFor(lastIndex, 'arrive') + orbitFor(lastIndex),
+      pitchFor(lastIndex),
+    ),
+    easing: 'easeInOutSine',
+  });
 
   const format: ProjectFormat = {
     width: 1920,
@@ -202,8 +340,18 @@ function clampDuration(
   return Math.round(Math.min(MAX_SEGMENT_MS, Math.max(MIN_SEGMENT_MS, value)));
 }
 
+function norm360(deg: number): number {
+  if (!Number.isFinite(deg)) return 0;
+  return ((deg % 360) + 360) % 360;
+}
+
 function cam(center: LngLat, zoom: number, bearing = 0, pitch = 0) {
-  return { center: [...center] as LngLat, zoom, bearing, pitch };
+  // Bearings are summed from several sources (mode, override, orbit), so
+  // normalise here rather than at every call site. Orbit is deliberately
+  // applied BEFORE this, so a +180 orbit survives as a real half-turn:
+  // lerpBearing takes the shortest path between the two normalised
+  // endpoints, which is what "orbit halfway round" should look like.
+  return { center: [...center] as LngLat, zoom, bearing: norm360(bearing), pitch };
 }
 
 function marker(

@@ -2,7 +2,7 @@
 
 import type { LegMode, LngLat, TripStop } from '@mapmotion/engine';
 import type { PinAppearance } from '@mapmotion/engine';
-import type { FormatId, MapAppearance } from './urlState';
+import type { CameraSettings, FormatId, MapAppearance } from './urlState';
 
 /**
  * Saved projects, stored locally.
@@ -32,6 +32,8 @@ export interface SavedProject {
   legDurations?: (number | null)[];
   stopDwells?: (number | null)[];
   appearance?: MapAppearance;
+  /** Optional: projects saved before camera controls existed have none. */
+  camera?: CameraSettings;
   pin?: PinAppearance;
   format: FormatId;
   styleId: string;

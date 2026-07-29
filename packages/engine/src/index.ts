@@ -10,3 +10,4 @@ export * from './search';
 export * from './simplify';
 export * from './importTrack';
 export * from './title';
+export * from './framing';

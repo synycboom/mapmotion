@@ -27,6 +27,22 @@ Import the repo in Vercel and set **Root Directory** to `apps/web` (keep "Includ
 2. The engine never reads from the map; it only writes FrameState to it (`jumpTo`, never `easeTo`).
 3. Easing/interpolation are pure functions, unit-tested against golden values.
 
+## Camera
+
+Framing defaults to **Auto**: each stop's zoom comes from the distance to its
+nearest neighbour, so a Paris–Lyon hop frames at ~z7.7 while Bangkok–Tokyo
+frames at ~z4.7. A fixed zoom is right for one of those and absurd for the
+other, which is why it isn't the default. Named presets (Street … World) pin
+every stop, and any single stop can be overridden from the stop list without
+giving up automatic framing everywhere else.
+
+The **travel arc** is van Wijk's rho, exposed directly: it controls how far the
+camera pulls back on the way between two stops. **Rotation** is either fixed or
+follows the route, in which case the map turns during each dwell so you are
+always travelling up the screen — turning mid-flight reads as the map spinning.
+**Orbit** adds a rotation across each stop's dwell, which is what tilt and 3D
+terrain are for.
+
 ## Quick mode and Studio mode
 
 **Quick mode** hides time entirely: pick places, pick a look, export. **Studio
@@ -54,6 +70,13 @@ state lives in the URL, so any map is a shareable link:
 | `spd` | speed multiplier (0.5–2.5) |
 | `res` | output resolution scale 0.25–1 (draft exports) |
 | `lb` | label visibility bits: places, countries, roads, water, pois (e.g. `10110`) |
+| `zm` | framing preset: `auto`, `street`, `district`, `city`, `region`, `country`, `continent`, `world` |
+| `sz` | per-stop zoom overrides, `_`-joined, `-` for automatic (e.g. `-_12.5_-`) |
+| `arc` | travel arc — van Wijk rho, 0.8 (direct) to 3 (sweeping) |
+| `bm` | `travel` to turn the map so you always travel upward |
+| `brg` | camera heading in degrees (an offset when `bm=travel`) |
+| `orb` | degrees the camera orbits each stop during its dwell |
+| `ez` | movement easing: `c` smooth, `s` gentle, `o` snap out, `i` ramp up, `l` constant |
 | `prj` | `globe` for spherical projection |
 | `ter` | `1` to enable 3D terrain |
 | `pit` | camera tilt in degrees (0–85) |
@@ -74,7 +97,7 @@ to point at a different OSRM-compatible instance.
 ## Tests
 
 ```bash
-npm test                                    # 120 engine unit tests
+npm test                                    # 159 engine unit tests
 node apps/web/e2e/export-test.mjs           # headless export proof
 xvfb-run -a node apps/web/e2e/headful-style-test.mjs   # remote vector style + export
 xvfb-run -a node apps/web/e2e/quickmode-test.mjs       # full Quick mode UI flow
@@ -87,4 +110,9 @@ xvfb-run -a node apps/web/e2e/vehicles-test.mjs        # travel modes + moving v
 xvfb-run -a node apps/web/e2e/appearance-test.mjs      # label toggles, projection, tilt, terrain
 xvfb-run -a node apps/web/e2e/pins-test.mjs            # marker styles
 xvfb-run -a node apps/web/e2e/gif-test.mjs             # GIF export
+xvfb-run -a node apps/web/e2e/camera-test.mjs          # framing, arc, rotation, orbit, tilt
+xvfb-run -a node apps/web/e2e/mobile-test.mjs          # phone/tablet layout
 ```
+
+Suites bind different ports and can run back to back, but not in parallel —
+and give a suite a moment to release its port before starting the next one.

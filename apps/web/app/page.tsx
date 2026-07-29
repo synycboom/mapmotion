@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import {
+  autoStopZooms,
   compileTrip,
   sceneAt,
   DEFAULT_PIN,
@@ -20,13 +21,16 @@ import { exportVideo, type ExportFormat, type ExportResult } from '../lib/export
 import { STYLES, getStyle, customStyle, type StyleDef } from '../lib/styles';
 import {
   DEFAULT_APPEARANCE,
+  DEFAULT_CAMERA,
   FORMATS,
   decodeState,
   encodeState,
   scaledDims,
+  type CameraSettings,
   type FormatId,
   type MapAppearance,
 } from '../lib/urlState';
+import { CameraPanel } from '../components/CameraPanel';
 import { PlaceSearch } from '../components/PlaceSearch';
 import { StopList } from '../components/StopList';
 import { useLegRoutes } from '../lib/useLegRoutes';
@@ -90,6 +94,7 @@ export default function Editor() {
   const [selected, setSelected] = useState<{ kind: 'leg' | 'stop'; index: number } | null>(null);
   const [pin, setPin] = useState<PinAppearance>(DEFAULT_PIN);
   const [appearance, setAppearance] = useState<MapAppearance>(DEFAULT_APPEARANCE);
+  const [camera, setCamera] = useState<CameraSettings>(DEFAULT_CAMERA);
   const [layerCounts, setLayerCounts] = useState<Record<LabelCategory, number>>({
     places: 0, countries: 0, roads: 0, water: 0, pois: 0,
   });
@@ -165,7 +170,13 @@ export default function Editor() {
     const out = scaledDims(format, res);
     return compileTrip('Trip', stops, {
       format: { width: out.width, height: out.height, fps: 30 },
-      stopZoom: 4.4,
+      zoomPreset: camera.zoomPreset,
+      stopZooms: camera.stopZooms,
+      arc: camera.arc,
+      bearing: camera.bearing,
+      bearingMode: camera.bearingMode,
+      orbitDeg: camera.orbit,
+      travelEasing: camera.easing,
       pitch: appearance.pitch,
       pin,
       dwellMs: Math.round(1200 / speed),
@@ -191,8 +202,19 @@ export default function Editor() {
     subtitle,
     outro,
     appearance.pitch,
+    camera,
     pin,
   ]);
+
+  /**
+   * What automatic framing would choose for each stop — shown as the
+   * placeholder in the stop list. Derived from the same function the compiler
+   * uses, so the number in the UI is the number that renders.
+   */
+  const autoZooms = useMemo(() => {
+    const out = scaledDims(format, res);
+    return autoStopZooms(stops, Math.min(out.width, out.height));
+  }, [stops, format, res]);
 
   useEffect(() => {
     projectRef.current = project;
@@ -209,6 +231,7 @@ export default function Editor() {
       format: '16x9',
       legModes: [],
       appearance: DEFAULT_APPEARANCE,
+      camera: DEFAULT_CAMERA,
       styleId: autotest ? 'minimal' : 'liberty',
       speed: 1,
       res: 1,
@@ -216,6 +239,7 @@ export default function Editor() {
     setStops(initial.stops);
     setLegModes(initial.legModes);
     setAppearance(initial.appearance);
+    setCamera(initial.camera);
     setFormat(initial.format);
     setSpeed(initial.speed);
     setRes(initial.res);
@@ -231,7 +255,13 @@ export default function Editor() {
 
     const bootProject = compileTrip('Trip', initial.stops, {
       format: { ...scaledDims(initial.format, initial.res), fps: 30 },
-      stopZoom: 4.4,
+      zoomPreset: initial.camera.zoomPreset,
+      stopZooms: initial.camera.stopZooms,
+      arc: initial.camera.arc,
+      bearing: initial.camera.bearing,
+      bearingMode: initial.camera.bearingMode,
+      orbitDeg: initial.camera.orbit,
+      pitch: initial.appearance.pitch,
       dwellMs: Math.round(1200 / initial.speed),
       legMs: Math.round(2600 / initial.speed),
     });
@@ -438,7 +468,7 @@ export default function Editor() {
   useEffect(() => {
     if (!booted) return;
     const qs = new URLSearchParams(
-      encodeState({ stops, legModes, appearance, format, styleId, speed, res }),
+      encodeState({ stops, legModes, appearance, camera, format, styleId, speed, res }),
     );
     // Carry through params the editor doesn't own, so a dev/test link keeps
     // working after the first state sync.
@@ -449,7 +479,7 @@ export default function Editor() {
     }
     window.history.replaceState(null, '', `?${qs}`);
     setCopied(false);
-  }, [stops, legModes, appearance, format, styleId, speed, res, booted]);
+  }, [stops, legModes, appearance, camera, format, styleId, speed, res, booted]);
 
 
   const runAutotest = async (map: maplibregl.Map) => {
@@ -602,15 +632,33 @@ export default function Editor() {
   // Stops and legs must stay length-consistent: legs = stops - 1. Each
   // mutation below fixes up legModes in the same commit so the two never
   // disagree (a mismatch would silently mis-assign modes to legs).
+  /**
+   * Per-stop camera overrides are positional, so every mutation of `stops`
+   * has to move them in step or a zoom set on Tokyo silently becomes a zoom
+   * on whatever ends up in that slot.
+   */
+  const editStopZooms = (fn: (prev: (number | null)[]) => (number | null)[]) =>
+    setCamera((prev) => ({ ...prev, stopZooms: fn(prev.stopZooms) }));
+
+  const setStopZoom = (i: number, zoom: number | null) =>
+    editStopZooms((prev) => {
+      const next = [...prev];
+      while (next.length < stops.length) next.push(null);
+      next[i] = zoom;
+      return next;
+    });
+
   const addStop = (hit: PlaceHit) => {
     setStops((prev) => [...prev, { name: hit.name, coordinate: hit.coordinate }]);
     setLegModes((prev) => [...prev, 'air']);
     setTrackGeometries((prev) => [...prev, null]);
     setLegDurations((prev) => [...prev, null]);
+    editStopZooms((prev) => [...prev, null]);
   };
 
   const removeStop = (i: number) => {
     setStops((prev) => prev.filter((_, j) => j !== i));
+    editStopZooms((prev) => prev.filter((_, j) => j !== i));
     // Dropping a stop removes the leg that led into it (or out of it, for
     // the first stop).
     const leg = Math.max(0, i - 1);
@@ -626,6 +674,12 @@ export default function Editor() {
     if (j < 0 || j >= stops.length) return;
     setStops((prev) => {
       const next = [...prev];
+      [next[i], next[j]] = [next[j]!, next[i]!];
+      return next;
+    });
+    editStopZooms((prev) => {
+      const next = [...prev];
+      while (next.length < stops.length) next.push(null);
       [next[i], next[j]] = [next[j]!, next[i]!];
       return next;
     });
@@ -674,6 +728,8 @@ export default function Editor() {
       setLegDurations(t.waypoints.slice(1).map(() => null));
       setStopDwells([]);
     }
+    // A fresh trip means the old positional overrides describe nothing.
+    editStopZooms(() => []);
     playheadRef.current = 0;
     setPlayheadMs(0);
   };
@@ -687,6 +743,7 @@ export default function Editor() {
       legDurations,
       stopDwells,
       appearance,
+      camera,
       pin,
       format,
       styleId,
@@ -707,6 +764,8 @@ export default function Editor() {
     setLegDurations(p.legDurations ? [...p.legDurations] : []);
     setStopDwells(p.stopDwells ? [...p.stopDwells] : []);
     if (p.appearance) setAppearance(p.appearance);
+    // Older saves predate camera settings; fall back rather than crash.
+    setCamera(p.camera ? { ...DEFAULT_CAMERA, ...p.camera } : DEFAULT_CAMERA);
     if (p.pin) setPin(p.pin);
     setSelected(null);
     setFormat(p.format);
@@ -728,6 +787,7 @@ export default function Editor() {
     setTrackGeometries(tpl.legModes.map(() => null));
     setLegDurations(tpl.legModes.map(() => null));
     setStopDwells([]);
+    editStopZooms(() => []);
     setSelected(null);
     setFormat(tpl.format);
     setSpeed(tpl.speed);
@@ -823,9 +883,12 @@ export default function Editor() {
           legModes={legModes}
           legStatuses={legStatuses}
           legMetrics={legMetrics}
+          stopZooms={camera.stopZooms}
+          autoZooms={autoZooms}
           onRemove={removeStop}
           onMove={moveStop}
           onSetLegMode={setLegMode}
+          onSetStopZoom={setStopZoom}
         />
 
         <div style={{ marginTop: 18 }}>
@@ -983,6 +1046,14 @@ export default function Editor() {
             ))}
           </select>
         </div>
+
+        <CameraPanel
+          camera={camera}
+          onChange={setCamera}
+          pitch={appearance.pitch}
+          onPitchChange={(deg) => setAppearance((a) => ({ ...a, pitch: deg }))}
+          disabled={exporting}
+        />
 
         <AppearancePanel
           appearance={appearance}

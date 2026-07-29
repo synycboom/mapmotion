@@ -114,5 +114,6 @@ export function cameraAt(project: Project, tMs: number): CameraState {
   const eased = ease(k1.easing, local);
   return flyInterpolate(k0.camera, k1.camera, eased, {
     size: [project.format.width, project.format.height],
+    rho: k1.rho,
   });
 }

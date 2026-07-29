@@ -127,23 +127,8 @@ export function AppearancePanel({
         </div>
       </div>
 
-      <div style={{ marginTop: 12 }}>
-        <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 5 }}>
-          Tilt · {Math.round(appearance.pitch)}°
-        </div>
-        <input
-          data-testid="pitch-slider"
-          type="range"
-          min={0}
-          max={75}
-          step={1}
-          value={appearance.pitch}
-          disabled={disabled}
-          onChange={(e) => set('pitch', Number(e.target.value))}
-          style={{ width: '100%' }}
-        />
-      </div>
-
+      {/* Tilt lives in the Camera panel — it's a shot decision, not a basemap
+          one — but terrain is meaningless without it, hence the hint below. */}
       <label
         style={{
           display: 'flex',
@@ -163,7 +148,7 @@ export function AppearancePanel({
         />
         3D terrain
         <span style={{ opacity: 0.5, fontSize: 10 }}>
-          {appearance.pitch === 0 ? '· tilt to see it' : ''}
+          {appearance.pitch === 0 ? '· add tilt in Camera to see it' : ''}
         </span>
       </label>
     </div>
