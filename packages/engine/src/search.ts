@@ -102,3 +102,59 @@ export function searchCities(
   }
   return out;
 }
+
+/**
+ * Closest city to a coordinate.
+ *
+ * Photo import needs to call a stop something, and "Stop 3" is a worse
+ * answer than "Ayutthaya" from a list we already ship. Distance is weighted
+ * by population on a log scale so a coordinate between a hamlet and a city
+ * resolves to the city — which is what a person would say they were near.
+ *
+ * `maxKm` bounds it: mid-ocean or deep-desert coordinates get null rather
+ * than the name of somewhere 400km away, because a confidently wrong label
+ * is worse than a numbered one.
+ */
+export function nearestCity(
+  rows: readonly CityRow[],
+  coordinate: readonly [number, number],
+  maxKm = 120,
+): PlaceHit | null {
+  const [lng, lat] = coordinate;
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+
+  // Longitude degrees shrink towards the poles; without this a point at 60°N
+  // would match a city twice as far east as one the same "distance" north.
+  const cosLat = Math.max(0.05, Math.cos((lat * Math.PI) / 180));
+  const maxDeg = maxKm / 111;
+  let best: PlaceHit | null = null;
+  let bestScore = Infinity;
+
+  for (const row of rows) {
+    const [name, cc, clng, clat, pop, cap] = row;
+    const dLat = clat - lat;
+    if (Math.abs(dLat) > maxDeg) continue;
+    const dLng = (clng - lng) * cosLat;
+    if (Math.abs(dLng) > maxDeg) continue;
+
+    const degrees = Math.hypot(dLat, dLng);
+    if (degrees > maxDeg) continue;
+
+    // Halve the effective distance for each 100x of population, so a capital
+    // 40km away beats a village 25km away.
+    const pull = 1 / (1 + Math.log10(Math.max(1, pop)) / 6);
+    const score = degrees * pull;
+    if (score < bestScore) {
+      bestScore = score;
+      best = {
+        name,
+        country: cc,
+        coordinate: [clng, clat],
+        population: pop,
+        isCapital: cap === 1,
+        score: Math.round(degrees * 111 * 10) / 10, // km, for the caller
+      };
+    }
+  }
+  return best;
+}

@@ -47,7 +47,8 @@ export type AnalyticsEvent =
   | 'export_completed'
   | 'export_failed'
   | 'audio_added'
-  | 'beat_snapped';
+  | 'beat_snapped'
+  | 'photos_imported';
 
 export type EventProps = Record<string, string | number | boolean | null | undefined>;
 

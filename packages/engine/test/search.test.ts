@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  nearestCity,
   normalize,
   parseQuery,
   searchCities,
@@ -96,5 +97,57 @@ describe('searchCities', () => {
     const [tokyo] = searchCities(ROWS, 'tokyo');
     expect(tokyo!.coordinate[0]).toBeCloseTo(139.6917, 3);
     expect(tokyo!.coordinate[1]).toBeCloseTo(35.6895, 3);
+  });
+});
+
+describe('nearestCity', () => {
+  // [name, countryCode, lng, lat, population, isCapital]
+  const NEAR_ROWS: CityRow[] = [
+    ['Bangkok', 'TH', 100.5018, 13.7563, 5_104_476, 1],
+    ['Nonthaburi', 'TH', 100.4927, 13.8622, 291_555, 0],
+    ['Ayutthaya', 'TH', 100.5877, 14.3532, 52_952, 0],
+    ['Tokyo', 'JP', 139.6917, 35.6895, 8_336_599, 1],
+    ['Tiny Village', 'TH', 100.4, 13.6, 400, 0],
+  ];
+
+  it('names a coordinate after the city it is in', () => {
+    const hit = nearestCity(NEAR_ROWS, [100.5018, 13.7563]);
+    expect(hit?.name).toBe('Bangkok');
+  });
+
+  it('prefers a big city slightly further away to a hamlet next door', () => {
+    // A person standing here says "near Bangkok", not "near Tiny Village".
+    const hit = nearestCity(NEAR_ROWS, [100.45, 13.68]);
+    expect(hit?.name).toBe('Bangkok');
+  });
+
+  it('still picks a genuinely closer town', () => {
+    const hit = nearestCity(NEAR_ROWS, [100.5877, 14.3532]);
+    expect(hit?.name).toBe('Ayutthaya');
+  });
+
+  it('returns null rather than a confidently wrong label', () => {
+    // Middle of the Pacific.
+    expect(nearestCity(NEAR_ROWS, [-140, 0])).toBeNull();
+  });
+
+  it('honours the distance bound', () => {
+    expect(nearestCity(NEAR_ROWS, [101.6, 13.7], 20)).toBeNull();
+    expect(nearestCity(NEAR_ROWS, [101.6, 13.7], 200)?.name).toBe('Bangkok');
+  });
+
+  it('corrects for longitude convergence away from the equator', () => {
+    // At 60°N a degree of longitude is half a degree of latitude on the
+    // ground; without the cosine correction the eastern city would win.
+    const polar: CityRow[] = [
+      ['North', 'XX', 20, 60.5, 1000, 0],
+      ['East', 'XX', 20.9, 60, 1000, 0],
+    ];
+    expect(nearestCity(polar, [20, 60], 200)?.name).toBe('East');
+  });
+
+  it('survives nonsense coordinates and an empty index', () => {
+    expect(nearestCity(NEAR_ROWS, [NaN, 13])).toBeNull();
+    expect(nearestCity([], [100.5, 13.7])).toBeNull();
   });
 });

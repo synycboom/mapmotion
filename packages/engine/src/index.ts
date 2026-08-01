@@ -12,3 +12,4 @@ export * from './importTrack';
 export * from './title';
 export * from './framing';
 export * from './audio';
+export * from './exif';

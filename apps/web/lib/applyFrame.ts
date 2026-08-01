@@ -5,12 +5,32 @@ import {
   type FrameState,
   type Project,
 } from '@mapmotion/engine';
-import { ensureVehicleIcons, vehicleImageId } from './vehicleIcons';
+import { ensureMarkerImages, ensureVehicleIcons, vehicleImageId } from './vehicleIcons';
 import { DEFAULT_PIN } from '@mapmotion/engine';
 
-/** Image id for a marker's own uploaded picture. */
-export function markerImageId(markerId: string): string {
-  return `mm-pinimg-${markerId}`;
+/** Prefix for every user-supplied marker image, so stale ones can be swept. */
+export const MARKER_IMAGE_PREFIX = 'mm-pinimg-';
+
+/**
+ * Image id for a marker's own picture.
+ *
+ * The URL is folded into the id, not just the marker id. Marker ids are
+ * positional (`marker-0`, `marker-1`), so importing a second folder of photos
+ * reuses them — and an id-only key plus the `hasImage` guard would show the
+ * PREVIOUS trip's photograph on the new trip's first stop.
+ */
+export function markerImageId(markerId: string, url?: string): string {
+  return `${MARKER_IMAGE_PREFIX}${markerId}-${hash(url ?? '')}`;
+}
+
+/** FNV-1a, 32-bit. Only needs to separate different images, not resist attack. */
+function hash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
 }
 
 /**
@@ -119,8 +139,18 @@ export class FrameApplier {
     return pairs;
   }
 
-  ensureIcons(): Promise<void> {
-    return ensureVehicleIcons(this.map, this.vehiclePairs());
+  /** Marker images the project needs, as (sprite id, source URL) pairs. */
+  markerImages(): Array<{ id: string; url: string }> {
+    return this.project.markers
+      .filter((m) => m.pin?.style === 'image' && m.pin.imageUrl)
+      .map((m) => ({ id: markerImageId(m.id, m.pin!.imageUrl), url: m.pin!.imageUrl! }));
+  }
+
+  async ensureIcons(): Promise<void> {
+    await Promise.all([
+      ensureVehicleIcons(this.map, this.vehiclePairs()),
+      ensureMarkerImages(this.map, this.markerImages()),
+    ]);
   }
 
   install(theme: MarkerTheme = DEFAULT_THEME): void {
@@ -207,7 +237,7 @@ export class FrameApplier {
                   : pin.style === 'marker'
                     ? vehicleImageId('markershape', pin.color)
                     : pin.style === 'image'
-                      ? markerImageId(m.id)
+                      ? markerImageId(m.id, pin.imageUrl)
                       : '',
               bubble: m.label ?? '',
             },

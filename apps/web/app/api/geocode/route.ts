@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { searchCities, type CityRow, type PlaceHit } from '@mapmotion/engine';
+import { nearestCity, searchCities, type CityRow, type PlaceHit } from '@mapmotion/engine';
 import cities from '../../../data/cities.json';
 
 const ROWS = cities as CityRow[];
@@ -24,6 +24,22 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const q = (searchParams.get('q') ?? '').slice(0, 120);
   const limit = Math.min(12, Math.max(1, Number(searchParams.get('limit')) || 8));
+
+  // Reverse lookup: ?near=lat,lng. Answered entirely from the bundled index —
+  // no upstream call, because photo import fires one of these per stop and a
+  // rate-limited geocoder would turn a 20-stop trip into a 20-second wait.
+  const near = searchParams.get('near');
+  if (near) {
+    const [lat, lng] = near.split(',').map(Number);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return NextResponse.json({ results: [], source: 'none' }, { status: 400 });
+    }
+    const hit = nearestCity(ROWS, [lng, lat]);
+    return NextResponse.json(
+      { results: hit ? [hit] : [], source: 'local-reverse' },
+      { headers: { 'Cache-Control': 'public, max-age=86400' } },
+    );
+  }
 
   if (q.trim().length < 2) {
     return NextResponse.json({ results: [], source: 'none' });

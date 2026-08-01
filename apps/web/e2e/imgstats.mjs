@@ -89,3 +89,38 @@ export function pngStats(file, rect = null, dpr = 1) {
     return { distinctColors: 0, meanLuma: 0, stddev: 0, top: [], error: String(e.message ?? e).slice(0, 120) };
   }
 }
+
+/**
+ * Raw RGB pixels of a region, for questions colour statistics can't answer —
+ * "is there a red circle in the middle of this map" being the one that
+ * matters when the thing under test is whether a sprite drew at all.
+ */
+export function rawPixels(file, rect = null, dpr = 1, w = 240, h = 240) {
+  const crop = rect
+    ? { x: rect.x * dpr, y: rect.y * dpr, w: rect.w * dpr, h: rect.h * dpr }
+    : null;
+  const filters = [];
+  if (crop && crop.w > 1 && crop.h > 1) {
+    const r = (n) => Math.max(0, Math.round(n));
+    filters.push(`crop=${r(crop.w)}:${r(crop.h)}:${r(crop.x)}:${r(crop.y)}`);
+  }
+  filters.push(`scale=${w}:${h}`);
+  try {
+    const buf = execFileSync('ffmpeg', [
+      '-v', 'error', '-i', file, '-frames:v', '1',
+      '-vf', filters.join(','), '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1',
+    ], { maxBuffer: 64 * 1024 * 1024 });
+    return { data: buf, width: w, height: h };
+  } catch {
+    return { data: Buffer.alloc(0), width: 0, height: 0 };
+  }
+}
+
+/** How many pixels satisfy `test(r, g, b)`. */
+export function countPixels({ data }, test) {
+  let n = 0;
+  for (let i = 0; i + 2 < data.length; i += 3) {
+    if (test(data[i], data[i + 1], data[i + 2])) n++;
+  }
+  return n;
+}

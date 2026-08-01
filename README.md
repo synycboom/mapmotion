@@ -69,6 +69,31 @@ always travelling up the screen — turning mid-flight reads as the map spinning
 **Orbit** adds a rotation across each stop's dwell, which is what tilt and 3D
 terrain are for.
 
+## Photo import
+
+Drop a folder of trip photos. Each one's EXIF GPS becomes a location, capture
+time becomes the order, photos taken in the same place merge into one stop,
+and the photograph itself becomes that stop's pin. Files never leave the
+browser — only the first 128KB of each is read, which is where EXIF lives.
+
+The EXIF reader is written rather than pulled in, so it can be a pure function
+over a `Uint8Array` and therefore unit-testable in Node against files built
+byte by byte: big-endian, missing GPS, a 0/0 "no fix" reading, a pointer past
+the end of the file, truncation at every length. Those are the cases that
+break EXIF parsers and none of them appear in a photo you happen to have.
+The fixtures are cross-checked against `piexif` so the parser and the fixture
+builder can't agree on a wrong layout.
+
+Clustering is sequential, not purely spatial: a trip that returns to the same
+city twice gets two stops, because that is what happened. Stop names come from
+the bundled city index via a reverse lookup — "Ayutthaya" rather than "Stop 3".
+
+Photos without GPS, HEIC files and unreadable files are counted and reported
+rather than silently dropped, and the three have different messages because
+they have different fixes. HEIC especially: it is the iPhone default, browsers
+can't read its metadata, and the answer is Settings › Camera › Formats › Most
+Compatible.
+
 ## Soundtrack and beat snapping
 
 Drop an audio file onto the editor and it is decoded, analysed and beat-tracked
@@ -157,7 +182,7 @@ to point at a different OSRM-compatible instance.
 ## Tests
 
 ```bash
-npm test                                    # 209 engine unit tests
+npm test                                    # 244 engine unit tests
 node apps/web/e2e/export-test.mjs           # headless export proof
 xvfb-run -a node apps/web/e2e/headful-style-test.mjs   # remote vector style + export
 xvfb-run -a node apps/web/e2e/quickmode-test.mjs       # full Quick mode UI flow
@@ -174,6 +199,7 @@ xvfb-run -a node apps/web/e2e/camera-test.mjs          # framing, arc, rotation,
 xvfb-run -a node apps/web/e2e/mobile-test.mjs          # phone/tablet layout
 xvfb-run -a node apps/web/e2e/analytics-test.mjs      # funnel events + no-leak proof
 xvfb-run -a node apps/web/e2e/audio-test.mjs          # beat detection, snapping, muxed audio
+xvfb-run -a node apps/web/e2e/photos-test.mjs         # EXIF import, photos as pins
 ```
 
 Suites bind different ports and can run back to back, but not in parallel —

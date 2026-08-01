@@ -41,6 +41,8 @@ import { PlaceSearch } from '../components/PlaceSearch';
 import { StopList } from '../components/StopList';
 import { useLegRoutes } from '../lib/useLegRoutes';
 import { TrackImport } from '../components/TrackImport';
+import { PhotoImport } from '../components/PhotoImport';
+import type { ImportedPhotos } from '../lib/photoImport';
 import { TEMPLATES, getTemplate } from '../lib/templates';
 import { drawTitles } from '../lib/drawTitles';
 import { ProjectLibrary } from '../components/ProjectLibrary';
@@ -101,6 +103,9 @@ export default function Editor() {
   const [stopDwells, setStopDwells] = useState<(number | null)[]>([]);
   const [selected, setSelected] = useState<{ kind: 'leg' | 'stop'; index: number } | null>(null);
   const [pin, setPin] = useState<PinAppearance>(DEFAULT_PIN);
+  // Per-stop marker overrides, parallel to stops. Photo import fills these
+  // with the user's own photographs, which is the whole point of it.
+  const [pinOverrides, setPinOverrides] = useState<(Partial<PinAppearance> | null)[]>([]);
   const [appearance, setAppearance] = useState<MapAppearance>(DEFAULT_APPEARANCE);
   const [camera, setCamera] = useState<CameraSettings>(DEFAULT_CAMERA);
   // Decoded samples are megabytes and not serialisable, so they live beside
@@ -192,6 +197,7 @@ export default function Editor() {
       travelEasing: camera.easing,
       pitch: appearance.pitch,
       pin,
+      pinOverrides,
       dwellMs: Math.round(1200 / speed),
       legMs: Math.round(2600 / speed),
       legModes,
@@ -220,6 +226,7 @@ export default function Editor() {
     camera,
     audio,
     pin,
+    pinOverrides,
   ]);
 
   /**
@@ -775,6 +782,11 @@ export default function Editor() {
   const editStopZooms = (fn: (prev: (number | null)[]) => (number | null)[]) =>
     setCamera((prev) => ({ ...prev, stopZooms: fn(prev.stopZooms) }));
 
+  /** Marker overrides are positional too, and move with their stop. */
+  const editPinOverrides = (
+    fn: (prev: (Partial<PinAppearance> | null)[]) => (Partial<PinAppearance> | null)[],
+  ) => setPinOverrides(fn);
+
   const setStopZoom = (i: number, zoom: number | null) =>
     editStopZooms((prev) => {
       const next = [...prev];
@@ -796,11 +808,13 @@ export default function Editor() {
     setTrackGeometries((prev) => [...prev, null]);
     setLegDurations((prev) => [...prev, null]);
     editStopZooms((prev) => [...prev, null]);
+    editPinOverrides((prev) => [...prev, null]);
   };
 
   const removeStop = (i: number) => {
     setStops((prev) => prev.filter((_, j) => j !== i));
     editStopZooms((prev) => prev.filter((_, j) => j !== i));
+    editPinOverrides((prev) => prev.filter((_, j) => j !== i));
     // Dropping a stop removes the leg that led into it (or out of it, for
     // the first stop).
     const leg = Math.max(0, i - 1);
@@ -820,6 +834,12 @@ export default function Editor() {
       return next;
     });
     editStopZooms((prev) => {
+      const next = [...prev];
+      while (next.length < stops.length) next.push(null);
+      [next[i], next[j]] = [next[j]!, next[i]!];
+      return next;
+    });
+    editPinOverrides((prev) => {
       const next = [...prev];
       while (next.length < stops.length) next.push(null);
       [next[i], next[j]] = [next[j]!, next[i]!];
@@ -877,8 +897,44 @@ export default function Editor() {
     }
     // A fresh trip means the old positional overrides describe nothing.
     editStopZooms(() => []);
+    editPinOverrides(() => []);
     playheadRef.current = 0;
     setPlayheadMs(0);
+  };
+
+  /**
+   * A folder of photos becomes the whole project: stops in the order they
+   * were taken, and each stop's marker is the photograph itself.
+   *
+   * Replaces rather than appends. Someone dropping their holiday folder is
+   * starting a project, not adding to the Bangkok-Tokyo demo, and merging the
+   * two would produce a trip nobody took.
+   */
+  const importPhotoTrip = (result: ImportedPhotos) => {
+    setStops(result.stops.map((s) => ({ ...s, coordinate: [...s.coordinate] as LngLat })));
+    const legs = Math.max(0, result.stops.length - 1);
+    setLegModes(Array.from({ length: legs }, () => 'air' as LegMode));
+    setTrackGeometries(Array.from({ length: legs }, () => null));
+    setLegDurations(Array.from({ length: legs }, () => null));
+    setStopDwells([]);
+    editStopZooms(() => []);
+    editPinOverrides(() =>
+      result.thumbnails.map((url) =>
+        url ? { style: 'image' as const, imageUrl: url } : null,
+      ),
+    );
+    setSelected(null);
+    playheadRef.current = 0;
+    setPlayheadMs(0);
+    trackOnce('project_edited', { via: 'photos' });
+    track('photos_imported', {
+      // Counts only — never a file name, a coordinate or a place name.
+      photos: result.summary.total,
+      located: result.summary.located,
+      no_gps: result.summary.noGps,
+      heic: result.summary.heic,
+      stops: result.stops.length,
+    });
   };
 
   const handleSave = (name: string) => {
@@ -941,6 +997,7 @@ export default function Editor() {
     setLegDurations(tpl.legModes.map(() => null));
     setStopDwells([]);
     editStopZooms(() => []);
+    editPinOverrides(() => []);
     setSelected(null);
     setFormat(tpl.format);
     setSpeed(tpl.speed);
@@ -1030,6 +1087,7 @@ export default function Editor() {
         </div>
 
         <PlaceSearch onPick={addStop} />
+        <PhotoImport onImport={importPhotoTrip} disabled={exporting} />
         <TrackImport onImport={importGpx} />
         <StopList
           stops={stops}

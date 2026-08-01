@@ -144,3 +144,56 @@ export async function ensureVehicleIcons(
     }),
   );
 }
+
+/**
+ * Load user-supplied marker images (photos) into the map's sprite atlas.
+ *
+ * `icon-image` resolves against images registered on the map, so a layer that
+ * references an id nothing ever added renders NOTHING — silently, with only a
+ * console warning. That is how the 'image' pin style shipped without ever
+ * having drawn a pixel: the id was generated, the feature property was set,
+ * the layer filter matched, and no image was ever registered.
+ */
+export async function ensureMarkerImages(
+  map: MLMap,
+  markers: Array<{ id: string; url: string }>,
+  prefix = 'mm-pinimg-',
+): Promise<void> {
+  // Sweep images from a previous project. Photos are large, ids are content
+  // -addressed, and nothing else will ever remove them.
+  const wanted = new Set(markers.map((m) => m.id));
+  try {
+    for (const id of map.listImages()) {
+      if (id.startsWith(prefix) && !wanted.has(id)) map.removeImage(id);
+    }
+  } catch {
+    /* listImages is unavailable until the style loads */
+  }
+
+  await Promise.all(
+    markers.map(async ({ id, url }) => {
+      if (!url || map.hasImage(id)) return;
+      try {
+        const data = await rasterise(url);
+        if (data && !map.hasImage(id)) map.addImage(id, data, { pixelRatio: 2 });
+      } catch {
+        // A broken data URL costs that one marker its picture, nothing more.
+      }
+    }),
+  );
+}
+
+/** Decode a data/blob URL into ImageData the sprite atlas can take. */
+async function rasterise(url: string): Promise<ImageData | null> {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const g = canvas.getContext('2d', { willReadFrequently: true });
+  if (!g) return null;
+  g.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return g.getImageData(0, 0, canvas.width, canvas.height);
+}
