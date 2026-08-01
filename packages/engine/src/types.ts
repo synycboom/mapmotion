@@ -9,6 +9,7 @@
  *  - Zero DOM / MapLibre imports — this package runs in Node for tests.
  */
 
+import type { AudioTrack } from './audio';
 import type { TitleCard, TitleState } from './title';
 import type { TravelMode } from './travel';
 import type { PinAppearance } from './pins';
@@ -98,6 +99,12 @@ export interface Project {
   markers: MarkerTrack[];
   /** Intro/outro text cards. */
   titles: TitleCard[];
+  /**
+   * Optional soundtrack. The decoded samples never live in the project —
+   * they're megabytes and the project has to stay serialisable — so this
+   * carries only the timing, the gain and the detected beats.
+   */
+  audio?: AudioTrack;
 }
 
 /** Fully-resolved state of the scene at one instant. */

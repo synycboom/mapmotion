@@ -45,7 +45,9 @@ export type AnalyticsEvent =
   | 'link_copied'
   | 'export_started'
   | 'export_completed'
-  | 'export_failed';
+  | 'export_failed'
+  | 'audio_added'
+  | 'beat_snapped';
 
 export type EventProps = Record<string, string | number | boolean | null | undefined>;
 

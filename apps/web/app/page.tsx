@@ -4,10 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import {
   autoStopZooms,
+  beatPeriodMs,
   compileTrip,
+  quantiseDurations,
   sceneAt,
+  tripSegments,
   DEFAULT_PIN,
   PIN_STYLES,
+  type AudioTrack,
   type ImportedTrack,
   type PinAppearance,
   type LegMode,
@@ -31,6 +35,8 @@ import {
   type MapAppearance,
 } from '../lib/urlState';
 import { CameraPanel } from '../components/CameraPanel';
+import { AudioPanel } from '../components/AudioPanel';
+import { AudioPreview, type AudioSource } from '../lib/audioSource';
 import { PlaceSearch } from '../components/PlaceSearch';
 import { StopList } from '../components/StopList';
 import { useLegRoutes } from '../lib/useLegRoutes';
@@ -56,6 +62,7 @@ declare global {
     __exportResult?: Record<string, unknown>;
     __exportB64?: string;
     __map?: maplibregl.Map;
+    __mmProject?: Project;
     __mmDiag?: () => Record<string, unknown>;
   }
 }
@@ -96,6 +103,11 @@ export default function Editor() {
   const [pin, setPin] = useState<PinAppearance>(DEFAULT_PIN);
   const [appearance, setAppearance] = useState<MapAppearance>(DEFAULT_APPEARANCE);
   const [camera, setCamera] = useState<CameraSettings>(DEFAULT_CAMERA);
+  // Decoded samples are megabytes and not serialisable, so they live beside
+  // the project rather than inside it; only the AudioTrack metadata is
+  // compiled in, saved and exported.
+  const [audio, setAudio] = useState<AudioSource | null>(null);
+  const audioPreviewRef = useRef<AudioPreview | null>(null);
   const [layerCounts, setLayerCounts] = useState<Record<LabelCategory, number>>({
     places: 0, countries: 0, roads: 0, water: 0, pois: 0,
   });
@@ -169,7 +181,7 @@ export default function Editor() {
   const project = useMemo<Project | null>(() => {
     if (stops.length < 2) return null;
     const out = scaledDims(format, res);
-    return compileTrip('Trip', stops, {
+    const compiled = compileTrip('Trip', stops, {
       format: { width: out.width, height: out.height, fps: 30 },
       zoomPreset: camera.zoomPreset,
       stopZooms: camera.stopZooms,
@@ -190,6 +202,8 @@ export default function Editor() {
       subtitle,
       outro,
     });
+    if (audio) compiled.audio = audio.track;
+    return compiled;
   }, [
     stops,
     format,
@@ -204,6 +218,7 @@ export default function Editor() {
     outro,
     appearance.pitch,
     camera,
+    audio,
     pin,
   ]);
 
@@ -219,6 +234,9 @@ export default function Editor() {
 
   useEffect(() => {
     projectRef.current = project;
+    // Exposed for e2e: the compiled scene is the only place to verify that a
+    // control actually changed the render rather than just the UI.
+    window.__mmProject = project ?? undefined;
   }, [project]);
 
   // ---- boot: read URL state, then create the map with a resolved style ----
@@ -593,11 +611,16 @@ export default function Editor() {
       playingRef.current = false;
       setPlaying(false);
       cancelAnimationFrame(rafRef.current);
+      audioPreviewRef.current?.stop();
       return;
     }
     playingRef.current = true;
     setPlaying(true);
     if (playheadRef.current >= proj.format.durationMs - 10) seek(0);
+    // Start the music from the same instant. The audio then runs on its own
+    // clock rather than being nudged every frame — chasing rAF with
+    // AudioBufferSourceNode restarts is what makes web audio stutter.
+    audioPreviewRef.current?.start(playheadRef.current, proj.format.durationMs);
     let last = performance.now();
     const tick = (now: number) => {
       if (!playingRef.current) return;
@@ -608,12 +631,77 @@ export default function Editor() {
         seek(proj.format.durationMs);
         playingRef.current = false;
         setPlaying(false);
+        audioPreviewRef.current?.stop();
         return;
       }
       seek(next);
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
+  };
+
+  // Keep one preview player alive for the session; swapping its source is
+  // cheaper than rebuilding the Web Audio graph, and creating a second
+  // AudioContext per import would hit the browser's cap.
+  useEffect(() => {
+    if (!audioPreviewRef.current) audioPreviewRef.current = new AudioPreview(audio);
+    else audioPreviewRef.current.setSource(audio);
+  }, [audio]);
+
+  useEffect(() => () => audioPreviewRef.current?.stop(), []);
+
+  const handleAudioSource = (next: AudioSource | null) => {
+    audioPreviewRef.current?.stop();
+    setAudio(next);
+    if (next) {
+      trackOnce('project_edited', { via: 'audio' });
+      track('audio_added', {
+        // Duration and tempo, never the file name — that is the user's, and
+        // it is usually the artist and title.
+        duration_s: Math.round(next.track.durationMs / 1000),
+        bpm: next.track.bpm,
+        beats: next.track.beats.length,
+        confidence: Math.round(next.analysis.confidence * 100) / 100,
+      });
+    }
+  };
+
+  const handleTrackChange = (t: AudioTrack) => {
+    audioPreviewRef.current?.stop();
+    setAudio((prev) => (prev ? { ...prev, track: t } : prev));
+  };
+
+  /**
+   * Round every dwell and travel leg to a whole number of beats.
+   *
+   * Reads the durations back out of the COMPILED project rather than from
+   * the options, so what gets quantised is what actually rendered — speed
+   * multiplier, per-segment overrides and clamps already applied. Writing
+   * the results into the same legDurations/stopDwells that Studio mode edits
+   * means the result is inspectable and undoable, not a hidden mode.
+   */
+  const snapToBeat = () => {
+    const proj = projectRef.current;
+    const beats = audio?.track.beats;
+    if (!proj || !beats?.length) return;
+    // Prefer the estimator's sub-frame period; the median gap between beats
+    // is quantised to analysis frames and drifts audibly over a long video.
+    const period = audio?.track.periodMs ?? beatPeriodMs(beats);
+    if (period === null) return;
+
+    const { dwells, legs } = tripSegments(proj);
+    // Legs get at least a whole beat; a half-beat flight is a blink.
+    setStopDwells(quantiseDurations(dwells, period, { minBeats: 0.5 }));
+    setLegDurations(quantiseDurations(legs, period, { minBeats: 1 }));
+    // Trim the intro so the first cut lands on a beat rather than a fraction
+    // of one after it — quantising fixes the rhythm but not the phase.
+    setAudio((prev) =>
+      prev
+        ? { ...prev, track: { ...prev.track, offsetMs: Math.round(beats[0] ?? 0) } }
+        : prev,
+    );
+    setMode('studio');
+    track('beat_snapped', { bpm: audio?.track.bpm ?? null, segments: dwells.length + legs.length });
   };
 
   const runExport = async () => {
@@ -643,15 +731,20 @@ export default function Editor() {
         watermark: 'MAPMOTION',
         attribution: s.attribution,
         settleCapMs: s.settleCapMs,
+        audio,
         onProgress: (done, total) => setProgress(done / total),
       });
       setResult(res);
+      // Exposed for e2e: the outcome the user is shown, in a form a test can
+      // assert on without scraping the DOM.
+      window.__exportResult = { ...res, blob: undefined };
       setDownloadUrl(URL.createObjectURL(res.blob));
       // The one number that matters. `realtime_factor` is here because the
       // export-speed claim is a pricing argument and needs field evidence.
       track('export_completed', {
         format: exportFormat,
         codec: res.codec,
+        audio: res.audio,
         frames: res.frames,
         bytes: res.blob.size,
         wall_s: Math.round(res.wallMs / 100) / 10,
@@ -1107,6 +1200,16 @@ export default function Editor() {
           </select>
         </div>
 
+        <AudioPanel
+          source={audio}
+          onSource={handleAudioSource}
+          onTrackChange={handleTrackChange}
+          onSnapToBeat={snapToBeat}
+          playheadMs={playheadMs}
+          videoDurationMs={project?.format.durationMs ?? 1}
+          disabled={exporting}
+        />
+
         <CameraPanel
           camera={camera}
           onChange={(next) => {
@@ -1267,6 +1370,7 @@ export default function Editor() {
             onChange={(e) => {
               playingRef.current = false;
               setPlaying(false);
+              audioPreviewRef.current?.stop();
               seek(Number(e.target.value));
             }}
             style={{ flex: 1, minWidth: 110 }}
@@ -1353,11 +1457,21 @@ export default function Editor() {
         )}
         {result && downloadUrl && (
           <p style={{ fontSize: 13, opacity: 0.85 }}>
-            {result.frames} frames · {result.codec} · {(result.blob.size / 1e6).toFixed(1)} MB ·{' '}
+            {result.frames} frames · {result.codec}
+            {result.audio === 'included' && ' + audio'} · {(result.blob.size / 1e6).toFixed(1)} MB ·{' '}
             {(result.wallMs / 1000).toFixed(1)}s ({result.realtimeFactor.toFixed(2)}× realtime) ·{' '}
             <a href={downloadUrl} download={`mapmotion.${result.ext}`} style={{ color: '#74c0fc' }}>
               download .{result.ext}
             </a>
+            {result.audio !== 'included' && result.audio !== 'none' && (
+              <span data-testid="audio-outcome" style={{ color: '#ffc078', display: 'block', fontSize: 12, marginTop: 2 }}>
+                {result.audio === 'unsupported-format'
+                  ? 'GIF has no audio track — export as MP4 to keep the music.'
+                  : result.audio === 'unsupported-encoder'
+                    ? 'This browser has no audio encoder, so the video is silent. Chrome or Edge will include it.'
+                    : 'The soundtrack could not be encoded, so the video is silent.'}
+              </span>
+            )}
           </p>
         )}
       </section>

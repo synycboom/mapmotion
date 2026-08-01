@@ -4,9 +4,24 @@ import { drawTitles } from './drawTitles';
 import type { FrameApplier } from './applyFrame';
 import { Muxer as Mp4Muxer, ArrayBufferTarget as Mp4Target } from 'mp4-muxer';
 import { Muxer as WebmMuxer, ArrayBufferTarget as WebmTarget } from 'webm-muxer';
+import { planarFrom, renderExportAudio, type AudioSource } from './audioSource';
 import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 
 export type ExportFormat = 'video' | 'gif';
+
+/**
+ * What happened to the soundtrack.
+ *
+ * Reported rather than silently decided, because "my music is missing" with
+ * no explanation is a support ticket, and the honest answers differ: GIF has
+ * no audio track at all, and a browser without an AudioEncoder can't make one.
+ */
+export type AudioOutcome =
+  | 'none'
+  | 'included'
+  | 'unsupported-format'
+  | 'unsupported-encoder'
+  | 'failed';
 
 export interface ExportResult {
   blob: Blob;
@@ -16,6 +31,9 @@ export interface ExportResult {
   wallMs: number;
   msPerFrame: number;
   realtimeFactor: number; // wall time / video duration; 1 = realtime
+  audio: AudioOutcome;
+  /** Audio codec actually used, when one was. */
+  audioCodec?: string;
 }
 
 export interface ExportOptions {
@@ -30,6 +48,11 @@ export interface ExportOptions {
   settleCapMs?: number;
   onProgress?: (done: number, total: number) => void;
   signal?: AbortSignal;
+  /**
+   * Decoded soundtrack. Kept separate from the Project because the samples
+   * are megabytes and the Project has to stay serialisable.
+   */
+  audio?: AudioSource | null;
 }
 
 interface CodecChoice {
@@ -64,10 +87,24 @@ export async function exportVideo(
   const mp4Target = new Mp4Target();
   const webmTarget = new WebmTarget();
 
+  // Audio has to be resolved BEFORE the muxer exists: a track can only be
+  // declared at construction, so discovering later that the encoder is
+  // missing would mean throwing the file away and starting again.
+  const audioPlan = await planAudio(opts.audio ?? null, isMp4, durationMs);
+
   const muxer = isMp4
     ? new Mp4Muxer({
         target: mp4Target,
         video: { codec: 'avc', width, height },
+        ...(audioPlan.ok
+          ? {
+              audio: {
+                codec: 'aac' as const,
+                numberOfChannels: audioPlan.channels,
+                sampleRate: audioPlan.sampleRate,
+              },
+            }
+          : {}),
         fastStart: 'in-memory',
         firstTimestampBehavior: 'offset',
       })
@@ -79,6 +116,15 @@ export async function exportVideo(
           height,
           frameRate: fps,
         },
+        ...(audioPlan.ok
+          ? {
+              audio: {
+                codec: 'A_OPUS',
+                numberOfChannels: audioPlan.channels,
+                sampleRate: audioPlan.sampleRate,
+              },
+            }
+          : {}),
         firstTimestampBehavior: 'offset',
       });
 
@@ -107,6 +153,20 @@ export async function exportVideo(
   const mapCanvas = map.getCanvas();
   const t0 = performance.now();
   const settleCapMs = opts.settleCapMs ?? 900;
+
+  // Encode the whole soundtrack up front. It takes well under a second even
+  // for a minute of audio, and doing it first means a failure here costs
+  // nothing — the video loop hasn't started yet.
+  let audioOutcome = audioPlan.outcome;
+  if (audioPlan.ok) {
+    try {
+      await encodeAudio(audioPlan, muxer);
+      audioOutcome = 'included';
+    } catch {
+      // A silent video is a far better outcome than no video.
+      audioOutcome = 'failed';
+    }
+  }
 
   // Vehicle sprites are rasterised on demand; make sure every one this
   // project needs exists BEFORE the first captured frame, or early frames
@@ -159,7 +219,124 @@ export async function exportVideo(
     wallMs,
     msPerFrame: wallMs / totalFrames,
     realtimeFactor: wallMs / durationMs,
+    audio: audioOutcome,
+    audioCodec: audioPlan.ok ? audioPlan.codec : undefined,
   };
+}
+
+interface AudioPlan {
+  ok: boolean;
+  outcome: AudioOutcome;
+  codec: string;
+  sampleRate: number;
+  channels: number;
+  buffer: AudioBuffer | null;
+}
+
+const NO_AUDIO: AudioPlan = {
+  ok: false,
+  outcome: 'none',
+  codec: '',
+  sampleRate: 48000,
+  channels: 2,
+  buffer: null,
+};
+
+/**
+ * Decide whether this export can carry audio, and render it if so.
+ *
+ * 48kHz throughout: Opus only speaks 48k, and AAC is happy there, so one rate
+ * avoids a second resampling path that would exist purely to save nothing.
+ */
+async function planAudio(
+  source: AudioSource | null,
+  isMp4: boolean,
+  durationMs: number,
+): Promise<AudioPlan> {
+  if (!source) return NO_AUDIO;
+  if (typeof AudioEncoder === 'undefined') {
+    return { ...NO_AUDIO, outcome: 'unsupported-encoder' };
+  }
+
+  const sampleRate = 48000;
+  const codec = isMp4 ? 'mp4a.40.2' : 'opus';
+  const channels = Math.min(2, Math.max(1, source.buffer.numberOfChannels));
+
+  try {
+    const { supported } = await AudioEncoder.isConfigSupported({
+      codec,
+      sampleRate,
+      numberOfChannels: channels,
+      bitrate: 128_000,
+    });
+    if (!supported) return { ...NO_AUDIO, outcome: 'unsupported-encoder' };
+  } catch {
+    return { ...NO_AUDIO, outcome: 'unsupported-encoder' };
+  }
+
+  const rendered = await renderExportAudio(source, durationMs, sampleRate);
+  if (!rendered) return NO_AUDIO;
+
+  return { ok: true, outcome: 'included', codec, sampleRate, channels, buffer: rendered };
+}
+
+/** AAC wants 1024-frame blocks; Opus is happy with them too. */
+const AUDIO_BLOCK = 1024;
+
+async function encodeAudio(
+  plan: AudioPlan,
+  muxer: {
+    addAudioChunk: (
+      chunk: EncodedAudioChunk,
+      meta?: EncodedAudioChunkMetadata,
+      timestamp?: number,
+    ) => void;
+  },
+): Promise<void> {
+  const buffer = plan.buffer!;
+  const planar = planarFrom(buffer);
+  const total = buffer.length;
+  const channels = buffer.numberOfChannels;
+
+  let error: Error | null = null;
+  const encoder = new AudioEncoder({
+    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+    error: (e) => {
+      error = e instanceof Error ? e : new Error(String(e));
+    },
+  });
+  encoder.configure({
+    codec: plan.codec,
+    sampleRate: plan.sampleRate,
+    numberOfChannels: channels,
+    bitrate: 128_000,
+  });
+
+  for (let offset = 0; offset < total; offset += AUDIO_BLOCK) {
+    if (error) throw error;
+    const frames = Math.min(AUDIO_BLOCK, total - offset);
+    // AudioData takes planar data as one buffer with the channels laid end to
+    // end, so each channel's slice has to be copied into the right region.
+    const block = new Float32Array(frames * channels);
+    for (let c = 0; c < channels; c++) {
+      block.set(planar.subarray(c * total + offset, c * total + offset + frames), c * frames);
+    }
+    const data = new AudioData({
+      format: 'f32-planar',
+      sampleRate: plan.sampleRate,
+      numberOfFrames: frames,
+      numberOfChannels: channels,
+      timestamp: Math.round((offset / plan.sampleRate) * 1e6),
+      data: block,
+    });
+    encoder.encode(data);
+    data.close();
+    while (encoder.encodeQueueSize > 8) await sleep(1);
+  }
+
+  await encoder.flush();
+  encoder.close();
+  if (error) throw error;
 }
 
 async function pickCodec(
@@ -321,5 +498,8 @@ async function exportGif(
     wallMs,
     msPerFrame: wallMs / totalFrames,
     realtimeFactor: wallMs / durationMs,
+    // GIF has no audio track. Saying so beats leaving the user to work out
+    // why their soundtrack vanished.
+    audio: opts.audio ? 'unsupported-format' : 'none',
   };
 }

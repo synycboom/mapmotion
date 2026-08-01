@@ -369,3 +369,27 @@ function marker(
     enterDurationMs: 450,
   };
 }
+
+/**
+ * The video's timeline as a flat list of segments, read back from the
+ * compiled camera track.
+ *
+ * Derived rather than remembered: the compiler already resolved every
+ * override, speed multiplier and clamp, so reading the keyframes back is the
+ * only way to get the durations that actually rendered. Recomputing them from
+ * the options would drift the moment either side changes.
+ *
+ * Keyframes alternate arrive/depart per stop, so the diffs alternate
+ * dwell, leg, dwell, ... and there are always n dwells and n-1 legs.
+ */
+export function tripSegments(project: Project): { dwells: number[]; legs: number[] } {
+  const kfs = project.camera;
+  const dwells: number[] = [];
+  const legs: number[] = [];
+  for (let i = 1; i < kfs.length; i++) {
+    const span = kfs[i]!.tMs - kfs[i - 1]!.tMs;
+    if ((i - 1) % 2 === 0) dwells.push(span);
+    else legs.push(span);
+  }
+  return { dwells, legs };
+}

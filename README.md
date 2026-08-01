@@ -69,6 +69,40 @@ always travelling up the screen — turning mid-flight reads as the map spinning
 **Orbit** adds a rotation across each stop's dwell, which is what tilt and 3D
 terrain are for.
 
+## Soundtrack and beat snapping
+
+Drop an audio file onto the editor and it is decoded, analysed and beat-tracked
+locally — the file never leaves the browser, same as GPX import.
+
+Beat detection is Ellis (2007) dynamic programming over a log-energy onset
+envelope: build the envelope, estimate one global tempo from its
+autocorrelation under a log-Gaussian prior (which is what stops it settling on
+half or double the real tempo), then pick the beat sequence that best trades
+landing on onsets against staying on the grid. It coasts through a bar with no
+onsets at all, where a peak-picker loses the beat.
+
+It also refuses to answer when there is nothing to answer. Beat trackers always
+return *something*; run one on room tone and it hands back a confident tempo
+built from frame-boundary noise. A salience gate — mean onset strength at the
+chosen beats over the mean overall — rejects that. Click tracks score 15–30, a
+pure tone 3.6, broadband noise 3.8; the threshold is 8.
+
+**Cut to the beat** rounds every dwell and travel leg to a whole number of
+half-beats, then trims the audio to start on a beat. Quantising *durations*
+rather than nudging *boundaries* is what keeps the whole video on the grid — a
+boundary-nudger accumulates drift and can reorder two close boundaries. The
+result is written into the same per-segment timings Studio mode edits, so it is
+visible and undoable rather than a hidden mode.
+
+Timing uses the estimator's sub-frame period, not the median gap between
+detected beats: those are snapped to analysis frames (~23ms), so their median
+reads 511ms at 120 BPM instead of 500 — under 3% off, but more than half a beat
+of drift across a 30-second video.
+
+Exports carry the audio: AAC in MP4, Opus in WebM, via WebCodecs `AudioEncoder`.
+GIF has no audio track and a browser without an encoder can't make one; both
+cases say so rather than quietly producing a silent file.
+
 ## Quick mode and Studio mode
 
 **Quick mode** hides time entirely: pick places, pick a look, export. **Studio
@@ -123,7 +157,7 @@ to point at a different OSRM-compatible instance.
 ## Tests
 
 ```bash
-npm test                                    # 159 engine unit tests
+npm test                                    # 209 engine unit tests
 node apps/web/e2e/export-test.mjs           # headless export proof
 xvfb-run -a node apps/web/e2e/headful-style-test.mjs   # remote vector style + export
 xvfb-run -a node apps/web/e2e/quickmode-test.mjs       # full Quick mode UI flow
@@ -139,6 +173,7 @@ xvfb-run -a node apps/web/e2e/gif-test.mjs             # GIF export
 xvfb-run -a node apps/web/e2e/camera-test.mjs          # framing, arc, rotation, orbit, tilt
 xvfb-run -a node apps/web/e2e/mobile-test.mjs          # phone/tablet layout
 xvfb-run -a node apps/web/e2e/analytics-test.mjs      # funnel events + no-leak proof
+xvfb-run -a node apps/web/e2e/audio-test.mjs          # beat detection, snapping, muxed audio
 ```
 
 Suites bind different ports and can run back to back, but not in parallel —
