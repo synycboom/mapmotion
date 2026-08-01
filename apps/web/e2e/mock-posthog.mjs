@@ -46,9 +46,41 @@ function decodeBody(raw, contentType = '') {
   return { __undecodable: raw.toString('utf8').slice(0, 200), __contentType: contentType };
 }
 
+/**
+ * Reject anything PostHog itself would reject.
+ *
+ * This matters more than it looks. PostHog answers `200 OK` for events it
+ * silently discards — a missing or empty top-level `distinct_id` is dropped
+ * with no error anywhere. A mock that accepts any well-formed JSON therefore
+ * proves only that we SEND something, not that it would ever be INGESTED,
+ * and that gap shipped once already.
+ *
+ * Rules from https://posthog.com/docs/api/capture.
+ */
+function conformance(e) {
+  const problems = [];
+  if (!e || typeof e !== 'object') return ['not an object'];
+  if (!e.api_key) problems.push('missing api_key');
+  if (!e.event || typeof e.event !== 'string') problems.push('missing event name');
+  // The one that bit us: it must be top level, and non-empty.
+  if (typeof e.distinct_id !== 'string' || e.distinct_id.length === 0) {
+    problems.push(
+      e.properties && e.properties.distinct_id
+        ? 'distinct_id is inside properties instead of top level'
+        : 'missing top-level distinct_id',
+    );
+  }
+  if (e.timestamp !== undefined && Number.isNaN(Date.parse(e.timestamp))) {
+    problems.push('timestamp is not ISO 8601');
+  }
+  return problems;
+}
+
 export function startMockPosthog(port) {
   /** Every captured event, flattened across batches. */
   const events = [];
+  /** Events PostHog would have discarded, with the reason. */
+  const rejected = [];
   /** Raw bodies, so a leak test can search text we failed to decode too. */
   const rawBodies = [];
   const paths = [];
@@ -92,7 +124,18 @@ export function startMockPosthog(port) {
         rawBodies.push(raw.toString('utf8'));
         const body = decodeBody(raw, req.headers['content-type'] ?? '');
         const batch = Array.isArray(body) ? body : body?.batch ?? [body];
-        for (const e of batch) if (e && typeof e === 'object') events.push(e);
+        for (const e of batch) {
+          if (!e || typeof e !== 'object') continue;
+          const problems = conformance(e);
+          if (problems.length) {
+            rejected.push({ event: e.event ?? '(none)', problems });
+            // Answer 200 anyway — that is precisely what PostHog does, and a
+            // mock that returned an error would make the failure easy in a
+            // way production is not.
+            continue;
+          }
+          events.push(e);
+        }
       }
 
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -105,6 +148,7 @@ export function startMockPosthog(port) {
     server,
     host: `http://localhost:${port}`,
     events,
+    rejected,
     rawBodies,
     paths,
     /** Names of captured product events, in arrival order. */

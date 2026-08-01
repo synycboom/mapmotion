@@ -86,6 +86,24 @@ await page.goto(
 );
 await page.waitForTimeout(6000);
 
+console.log('\n[analytics] wire conformance');
+// Before anything else: would PostHog actually ingest what we send? The mock
+// applies PostHog's own discard rules, because PostHog answers 200 OK for
+// events it throws away and there is no other way to find out.
+ph.rejected.length === 0
+  ? pass('every event conforms to PostHog\'s capture contract')
+  : fail('every event conforms to PostHog\'s capture contract',
+      JSON.stringify(ph.rejected.slice(0, 3)));
+
+const shape = ph.events[0];
+shape && typeof shape.distinct_id === 'string' && shape.distinct_id.length > 0
+  ? pass('distinct_id is top level, where the ingest API requires it')
+  : fail('distinct_id is top level', JSON.stringify(shape)?.slice(0, 160));
+
+ph.paths.every((p) => p === '/i/v0/e/')
+  ? pass(`events go to the documented capture path (${[...new Set(ph.paths)].join(', ')})`)
+  : fail('events go to the documented capture path', JSON.stringify([...new Set(ph.paths)]));
+
 console.log('\n[analytics] the funnel');
 ph.names().includes('editor_opened')
   ? pass('editor_opened fires on load')

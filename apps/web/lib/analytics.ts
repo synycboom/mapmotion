@@ -127,9 +127,13 @@ export function track(event: AnalyticsEvent, props?: EventProps): void {
     const payload = {
       api_key: key(),
       event,
+      // TOP-LEVEL, not inside properties. PostHog drops events with a
+      // missing or empty distinct_id and still answers 200 OK — so getting
+      // this wrong produces no error, no failed request, and no data. It
+      // shipped that way once; the mock ingest server now rejects it.
+      distinct_id: distinctId,
       properties: {
         ...props,
-        distinct_id: distinctId,
         $session_id: sessionId,
         // Deliberately NOT $current_url: this app's URL is the user's
         // itinerary. `$pathname` is always '/' and carries nothing.
