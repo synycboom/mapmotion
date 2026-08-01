@@ -19,7 +19,33 @@ npm run e2e       # headless export proof (needs Playwright chromium + ffprobe)
 
 ## Deploy (Vercel)
 
-Import the repo in Vercel and set **Root Directory** to `apps/web` (keep "Include files outside root directory" enabled so the workspace packages resolve). No env vars needed yet.
+Import the repo in Vercel and set **Root Directory** to `apps/web` (keep
+"Include files outside root directory" enabled so the workspace packages
+resolve). No env vars are required — see `apps/web/.env.example` for the
+optional ones.
+
+## Analytics
+
+Off unless `NEXT_PUBLIC_POSTHOG_KEY` is set: with no key the app makes no
+analytics requests at all, which is what local development, CI and every e2e
+suite run with.
+
+Events are posted directly to PostHog's capture endpoint rather than through
+their SDK, for one specific reason. This app keeps the whole project in the
+URL (`?s=Paris,2.3522,48.8566~…`), so any SDK that captures `$current_url` —
+and they all do by default — would ship the user's itinerary and coordinates
+as a side effect of counting a page view. Turning that off is a config flag,
+and a config flag is one careless upgrade away from flipping back. Posting
+ourselves makes it structural: the only things that can leave `analytics.ts`
+are an event name and the properties a caller passed in.
+
+What is sent: counts and enum values (`stops: 3`, `format: '9x16'`,
+`template: 'road-trip'`, `realtime_factor: 0.41`). What is never sent: place
+names, titles, coordinates, search queries, or the URL. Do Not Track is
+honoured, and the anonymous id identifies a browser, not a person.
+
+The funnel is `editor_opened` → `project_edited` → `preview_played` →
+`export_started` → `export_completed`.
 
 ## Determinism rules
 
@@ -112,6 +138,7 @@ xvfb-run -a node apps/web/e2e/pins-test.mjs            # marker styles
 xvfb-run -a node apps/web/e2e/gif-test.mjs             # GIF export
 xvfb-run -a node apps/web/e2e/camera-test.mjs          # framing, arc, rotation, orbit, tilt
 xvfb-run -a node apps/web/e2e/mobile-test.mjs          # phone/tablet layout
+xvfb-run -a node apps/web/e2e/analytics-test.mjs      # funnel events + no-leak proof
 ```
 
 Suites bind different ports and can run back to back, but not in parallel —

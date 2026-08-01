@@ -49,6 +49,7 @@ import {
 import { saveProject, type SavedProject } from '../lib/projectLibrary';
 import { Timeline } from '../components/Timeline';
 import { useNarrow, usePreviewFit } from '../lib/responsive';
+import { initAnalytics, track, trackOnce } from '../lib/analytics';
 
 declare global {
   interface Window {
@@ -252,6 +253,19 @@ export default function Editor() {
     styleRef.current = initialStyle;
     setStyleId(initialStyle.id);
     setBooted(true);
+
+    // The funnel starts here. `from_link` separates people who arrived on
+    // someone else's map from people starting cold — they behave completely
+    // differently and averaging them together hides both.
+    initAnalytics();
+    track('editor_opened', {
+      from_link: params.has('s'),
+      stops: initial.stops.length,
+      format: initial.format,
+      style: initialStyle.id,
+      zoom_preset: initial.camera.zoomPreset,
+      viewport: window.innerWidth < 900 ? 'narrow' : 'wide',
+    });
 
     const bootProject = compileTrip('Trip', initial.stops, {
       format: { ...scaledDims(initial.format, initial.res), fps: 30 },
@@ -518,6 +532,7 @@ export default function Editor() {
     const map = mapRef.current;
     if (!map || exporting) return;
     const def = extraStyle && id === extraStyle.id ? extraStyle : getStyle(id);
+    track('style_changed', { style: def.id });
     styleRef.current = def;
     setStyleId(def.id);
     setStyleLoading(true);
@@ -571,6 +586,9 @@ export default function Editor() {
   const togglePlay = () => {
     const proj = projectRef.current;
     if (!proj) return;
+    // Watching the preview is the step between building and exporting; if
+    // people export without ever playing, the preview isn't earning its place.
+    trackOnce('preview_played', { duration_s: Math.round(proj.format.durationMs / 1000) });
     if (playingRef.current) {
       playingRef.current = false;
       setPlaying(false);
@@ -610,6 +628,14 @@ export default function Editor() {
     setResult(null);
     if (downloadUrl) URL.revokeObjectURL(downloadUrl);
     setDownloadUrl(null);
+    track('export_started', {
+      format: exportFormat,
+      duration_s: Math.round(proj.format.durationMs / 100) / 10,
+      width: proj.format.width,
+      height: proj.format.height,
+      stops: stops.length,
+      style: styleRef.current.id,
+    });
     try {
       const s = styleRef.current;
       const res = await exportVideo(map, applier, proj, {
@@ -621,8 +647,24 @@ export default function Editor() {
       });
       setResult(res);
       setDownloadUrl(URL.createObjectURL(res.blob));
+      // The one number that matters. `realtime_factor` is here because the
+      // export-speed claim is a pricing argument and needs field evidence.
+      track('export_completed', {
+        format: exportFormat,
+        codec: res.codec,
+        frames: res.frames,
+        bytes: res.blob.size,
+        wall_s: Math.round(res.wallMs / 100) / 10,
+        realtime_factor: Math.round(res.realtimeFactor * 100) / 100,
+      });
     } catch (e) {
       setError(String(e));
+      track('export_failed', {
+        format: exportFormat,
+        // Our own error strings and browser exceptions — never anything the
+        // user typed. Truncated so a stack trace can't ride along.
+        reason: String(e).slice(0, 120),
+      });
     } finally {
       setExporting(false);
       seek(playheadRef.current);
@@ -649,6 +691,13 @@ export default function Editor() {
     });
 
   const addStop = (hit: PlaceHit) => {
+    // Once per session: the funnel step is "did they make it theirs at all",
+    // not how many stops they added. Firing per keystroke would swamp it.
+    trackOnce('project_edited', { via: 'search' });
+    // Population is a proxy for "famous city vs obscure place" — it tells us
+    // whether the bundled index is enough or people are reaching for the
+    // long tail, without recording anywhere anyone actually searched for.
+    track('place_searched', { has_population: hit.population > 0 });
     setStops((prev) => [...prev, { name: hit.name, coordinate: hit.coordinate }]);
     setLegModes((prev) => [...prev, 'air']);
     setTrackGeometries((prev) => [...prev, null]);
@@ -710,6 +759,11 @@ export default function Editor() {
    * ordinary stops instead.
    */
   const importGpx = (t: ImportedTrack) => {
+    trackOnce('project_edited', { via: 'import' });
+    track('track_imported', {
+      points: t.track.length,
+      waypoints: t.waypoints.length,
+    });
     if (t.track.length >= 2) {
       const start = t.track[0]!;
       const end = t.track[t.track.length - 1]!;
@@ -735,6 +789,7 @@ export default function Editor() {
   };
 
   const handleSave = (name: string) => {
+    track('project_saved', { stops: stops.length });
     const rec = saveProject({
       name,
       stops,
@@ -782,6 +837,11 @@ export default function Editor() {
   const applyTemplate = (id: string) => {
     const tpl = getTemplate(id);
     if (!tpl) return;
+    trackOnce('project_edited', { via: 'template' });
+    // Template ids are ours, not user content — safe to send verbatim, and
+    // knowing which one people start from is the cheapest content signal
+    // we have.
+    track('template_applied', { template: id });
     setStops(tpl.stops.map((x) => ({ ...x, coordinate: [...x.coordinate] as LngLat })));
     setLegModes([...tpl.legModes]);
     setTrackGeometries(tpl.legModes.map(() => null));
@@ -1049,7 +1109,12 @@ export default function Editor() {
 
         <CameraPanel
           camera={camera}
-          onChange={setCamera}
+          onChange={(next) => {
+            // Once per session, and with the setting names only — sliders
+            // fire continuously and per-tick events would drown the funnel.
+            trackOnce('camera_changed', { preset: next.zoomPreset, mode: next.bearingMode });
+            setCamera(next);
+          }}
           pitch={appearance.pitch}
           onPitchChange={(deg) => setAppearance((a) => ({ ...a, pitch: deg }))}
           disabled={exporting}
@@ -1072,6 +1137,7 @@ export default function Editor() {
         <button
           onClick={() => {
             void navigator.clipboard?.writeText(location.href);
+            track('link_copied', { stops: stops.length, style: styleId });
             setCopied(true);
           }}
           style={{ ...btn, width: '100%', marginTop: 16, fontSize: 13 }}
