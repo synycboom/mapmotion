@@ -43,10 +43,17 @@ export function sceneAt(project: Project, tMs: number): FrameState {
     }
   }
 
+  const regions: Record<string, { progress: number }> = {};
+  for (const r of project.regions ?? []) {
+    const local = (tMs - r.enterMs) / Math.max(1, r.enterDurationMs);
+    regions[r.id] = { progress: ease(r.easing ?? 'easeOutCubic', local) };
+  }
+
   return {
     camera: cameraAt(project, tMs),
     routeProgress,
     titles: titlesAt(project.titles ?? [], tMs),
+    regions,
     vehicles,
     markers: Object.fromEntries(
       project.markers.map((m) => {

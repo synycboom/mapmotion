@@ -9,6 +9,12 @@
     "test": "npm run test -w @mapmotion/engine",
     "build": "npm run build -w web",
     "dev": "npm run dev -w web",
-    "e2e": "node apps/web/e2e/export-test.mjs"
+    "e2e": "node apps/web/e2e/export-test.mjs",
+    "build:countries": "node scripts/build-countries.mjs"
+  },
+  "devDependencies": {
+    "i18n-iso-countries": "^7.14.0",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2"
   }
 }

@@ -53,6 +53,27 @@ The funnel is `editor_opened` → `project_edited` → `preview_played` →
 2. The engine never reads from the map; it only writes FrameState to it (`jumpTo`, never `easeTo`).
 3. Easing/interpolation are pure functions, unit-tested against golden values.
 
+## Region highlighting
+
+Fill whole countries or named groups — EU, ASEAN, Schengen, G7, BRICS, MENA,
+Nordics, Latin America — with an animated entrance, or pick countries by hand.
+Several highlights coexist with their own colours, which is the point: "EU in
+blue, candidates in amber".
+
+Geometry is Natural Earth 1:110m via `world-atlas`, converted by
+`scripts/build-countries.mjs` into ~190KB of GeoJSON keyed on ISO alpha-3 with
+the codes baked in, so the app ships no ISO mapping table. It is fetched on
+demand rather than bundled: most projects never highlight anything, and making
+every visitor download a fifth of a megabyte of coastlines for a feature they
+aren't using is a poor trade.
+
+Two details that matter more than they look. Fills are inserted **beneath the
+first symbol layer**, so place names stay readable on top of a highlight — a
+fill over every label makes the map unreadable exactly when the viewer wants
+to know which countries these are. And overlapping selections are
+de-duplicated, because EU and Schengen share 23 members and drawing those
+fills twice would render the shared members visibly darker than the rest.
+
 ## Editor layout
 
 The editor is a rail of grouped panels — Trip, Style, Camera, Audio, Titles,
@@ -202,7 +223,7 @@ to point at a different OSRM-compatible instance.
 ## Tests
 
 ```bash
-npm test                                    # 244 engine unit tests
+npm test                                    # 269 engine unit tests
 node apps/web/e2e/export-test.mjs           # headless export proof
 xvfb-run -a node apps/web/e2e/headful-style-test.mjs   # remote vector style + export
 xvfb-run -a node apps/web/e2e/quickmode-test.mjs       # full Quick mode UI flow
@@ -220,6 +241,7 @@ xvfb-run -a node apps/web/e2e/mobile-test.mjs          # phone/tablet layout
 xvfb-run -a node apps/web/e2e/analytics-test.mjs      # funnel events + no-leak proof
 xvfb-run -a node apps/web/e2e/audio-test.mjs          # beat detection, snapping, muxed audio
 xvfb-run -a node apps/web/e2e/photos-test.mjs         # EXIF import, photos as pins
+xvfb-run -a node apps/web/e2e/regions-test.mjs        # country fills, layering, animation
 ```
 
 Suites bind different ports and can run back to back, but not in parallel —

@@ -6,6 +6,7 @@ import {
   type Project,
 } from '@mapmotion/engine';
 import { ensureMarkerImages, ensureVehicleIcons, vehicleImageId } from './vehicleIcons';
+import { countriesIfLoaded, loadCountries } from './countries';
 import { DEFAULT_PIN } from '@mapmotion/engine';
 
 /** Prefix for every user-supplied marker image, so stale ones can be swept. */
@@ -110,9 +111,10 @@ export class FrameApplier {
     this.ownedSources.push(id);
   }
 
-  private addLayer(spec: Parameters<MLMap['addLayer']>[0]): void {
+  /** `beneath` inserts before an existing layer, for z-ordering. */
+  private addLayer(spec: Parameters<MLMap['addLayer']>[0], beneath?: string): void {
     if (this.map.getLayer(spec.id)) this.map.removeLayer(spec.id);
-    this.map.addLayer(spec);
+    this.map.addLayer(spec, beneath && this.map.getLayer(beneath) ? beneath : undefined);
     this.ownedLayers.push(spec.id);
   }
 
@@ -139,6 +141,61 @@ export class FrameApplier {
     return pairs;
   }
 
+  /**
+   * Country fills, one layer pair per region track.
+   *
+   * All tracks share a single source holding every country and filter it by
+   * code, because the geometry is ~190KB and duplicating it per highlight
+   * would cost that again for each one.
+   *
+   * Inserted UNDER the first symbol layer so place labels stay legible on top
+   * of a fill — a highlight that buries every city name is worse than none.
+   */
+  private installRegions(): void {
+    const regions = this.project.regions ?? [];
+    if (regions.length === 0) return;
+
+    const data = countriesIfLoaded();
+    if (!data) {
+      // Not downloaded yet. Kick it off; ensureIcons() awaits the same
+      // promise, and the next install after it resolves will draw them.
+      void loadCountries();
+      return;
+    }
+
+    const map = this.map;
+    this.addSource(COUNTRIES_SOURCE, { type: 'geojson', data: data as never });
+
+    const beneath = firstSymbolLayer(map);
+
+    for (const r of regions) {
+      const filter = ['in', ['get', 'a3'], ['literal', r.codes]] as never;
+      this.addLayer(
+        {
+          id: `region-fill-${r.id}`,
+          type: 'fill',
+          source: COUNTRIES_SOURCE,
+          filter,
+          paint: { 'fill-color': r.fillColor, 'fill-opacity': 0 },
+        },
+        beneath,
+      );
+      if (r.lineWidth > 0) {
+        this.addLayer(
+          {
+            id: `region-line-${r.id}`,
+            type: 'line',
+            source: COUNTRIES_SOURCE,
+            filter,
+            layout: { 'line-join': 'round' },
+            paint: { 'line-color': r.lineColor, 'line-width': r.lineWidth, 'line-opacity': 0 },
+          },
+          beneath,
+        );
+      }
+    }
+  }
+
   /** Marker images the project needs, as (sprite id, source URL) pairs. */
   markerImages(): Array<{ id: string; url: string }> {
     return this.project.markers
@@ -150,12 +207,21 @@ export class FrameApplier {
     await Promise.all([
       ensureVehicleIcons(this.map, this.vehiclePairs()),
       ensureMarkerImages(this.map, this.markerImages()),
+      // Boundary geometry is a network fetch, so the export path has to await
+      // it too — otherwise the first frames would render without their fills.
+      (this.project.regions?.length ?? 0) > 0
+        ? loadCountries().then(() => {
+            if (!this.map.getSource(COUNTRIES_SOURCE)) this.installRegions();
+          })
+        : Promise.resolve(),
     ]);
   }
 
   install(theme: MarkerTheme = DEFAULT_THEME): void {
     this.teardown();
     const map = this.map;
+
+    this.installRegions();
 
     for (const r of this.project.routes) {
       this.addSource(`route-${r.id}`, {
@@ -358,6 +424,19 @@ export class FrameApplier {
       pitch: frame.camera.pitch,
     });
 
+    for (const r of this.project.regions ?? []) {
+      const progress = frame.regions[r.id]?.progress ?? 0;
+      // Paint properties, not feature-state: the fill is per LAYER (one
+      // colour and opacity for the whole set), and setPaintProperty is the
+      // cheapest way to animate that.
+      if (map.getLayer(`region-fill-${r.id}`)) {
+        map.setPaintProperty(`region-fill-${r.id}`, 'fill-opacity', r.fillOpacity * progress);
+      }
+      if (map.getLayer(`region-line-${r.id}`)) {
+        map.setPaintProperty(`region-line-${r.id}`, 'line-opacity', progress);
+      }
+    }
+
     for (const r of this.project.routes) {
       const progress = frame.routeProgress[r.id] ?? 0;
       const cum = this.cumulative.get(r.id)!;
@@ -440,6 +519,7 @@ function isOwnedLayer(id: string): boolean {
     id.startsWith('route-line-') ||
     id.startsWith('route-head-') ||
     id.startsWith('route-vehicle-') ||
+    id.startsWith('region-') ||
     false
   );
 }
@@ -449,9 +529,13 @@ function isOwnedSource(id: string): boolean {
     id.startsWith('route-') ||
     id.startsWith('head-') ||
     id.startsWith('vehicle-') ||
-    id === 'markers'
+    id === 'markers' ||
+    id === COUNTRIES_SOURCE
   );
 }
+
+/** One shared source holding every country; layers filter it by code. */
+export const COUNTRIES_SOURCE = 'mm-countries';
 
 function emptyLine(): GeoJSON.Feature {
   return {
@@ -463,4 +547,20 @@ function emptyLine(): GeoJSON.Feature {
 
 function emptyPoint(): GeoJSON.FeatureCollection {
   return { type: 'FeatureCollection', features: [] };
+}
+
+
+/**
+ * Id of the basemap's first symbol layer.
+ *
+ * Region fills go under it so place names stay readable on top of a
+ * highlight; a fill painted over every label makes the map unreadable at
+ * exactly the moment the viewer wants to know which countries these are.
+ */
+function firstSymbolLayer(map: MLMap): string | undefined {
+  const layers = map.getStyle()?.layers ?? [];
+  for (const l of layers) {
+    if (l.type === 'symbol' && !isOwnedLayer(l.id)) return l.id;
+  }
+  return undefined;
 }

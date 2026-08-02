@@ -19,6 +19,11 @@ import { simplifyLine } from './simplify';
 import { buildTitleCards } from './title';
 import { resolvePin, type PinAppearance } from './pins';
 import {
+  DEFAULT_REGION,
+  resolveRegionSelection,
+  type RegionTrack,
+} from './regions';
+import {
   migrateLegacyMode,
   travelMode,
   usesSuppliedGeometry,
@@ -115,6 +120,21 @@ export interface TripOptions {
   subtitle?: string | null;
   /** Repeat the title as an end card. */
   outro?: boolean;
+  /**
+   * Highlighted country sets. Each entry is a list of alpha-3 codes and/or
+   * REGION_GROUPS ids; groups are expanded and duplicates dropped.
+   */
+  regions?: readonly {
+    selection: readonly string[];
+    groupId?: string;
+    label?: string;
+    fillColor?: string;
+    fillOpacity?: number;
+    lineColor?: string;
+    lineWidth?: number;
+    /** Fraction of the video at which the fill appears. Default 0. */
+    enterAt?: number;
+  }[];
 }
 
 /**
@@ -312,6 +332,24 @@ export function compileTrip(
     durationMs: opts.format?.durationMs ?? t + 400,
   };
 
+  // Regions are timed as a fraction of the whole video rather than in ms,
+  // because the video's length isn't known until every leg has been laid out
+  // — and a highlight is almost always "from the start" or "when we get
+  // there", not "at 4,200ms".
+  const totalMs = opts.format?.durationMs ?? t + 400;
+  const regions: RegionTrack[] = (opts.regions ?? []).map((r, i) => ({
+    id: `region-${i}`,
+    codes: resolveRegionSelection(r.selection),
+    groupId: r.groupId,
+    label: r.label,
+    fillColor: r.fillColor ?? DEFAULT_REGION.fillColor,
+    fillOpacity: clamp01(r.fillOpacity ?? DEFAULT_REGION.fillOpacity),
+    lineColor: r.lineColor ?? DEFAULT_REGION.lineColor,
+    lineWidth: Math.max(0, r.lineWidth ?? DEFAULT_REGION.lineWidth),
+    enterMs: Math.round(clamp01(r.enterAt ?? 0) * totalMs),
+    enterDurationMs: DEFAULT_REGION.enterDurationMs,
+  })).filter((r) => r.codes.length > 0);
+
   const titles = buildTitleCards({
     title: opts.title,
     subtitle: opts.subtitle,
@@ -319,7 +357,7 @@ export function compileTrip(
     outro: opts.outro ?? false,
   });
 
-  return { version: 1, name, format, camera, routes, markers, titles };
+  return { version: 1, name, format, camera, routes, markers, regions, titles };
 }
 
 /**
@@ -338,6 +376,11 @@ function clampDuration(
     return fallback;
   }
   return Math.round(Math.min(MAX_SEGMENT_MS, Math.max(MIN_SEGMENT_MS, value)));
+}
+
+function clamp01(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
 function norm360(deg: number): number {

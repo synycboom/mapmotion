@@ -10,6 +10,7 @@
  */
 
 import type { AudioTrack } from './audio';
+import type { RegionState, RegionTrack } from './regions';
 import type { TitleCard, TitleState } from './title';
 import type { TravelMode } from './travel';
 import type { PinAppearance } from './pins';
@@ -97,6 +98,8 @@ export interface Project {
   camera: CameraKeyframe[];
   routes: RouteTrack[];
   markers: MarkerTrack[];
+  /** Highlighted countries and groups. Geometry lives in the app. */
+  regions?: RegionTrack[];
   /** Intro/outro text cards. */
   titles: TitleCard[];
   /**
@@ -116,6 +119,8 @@ export interface FrameState {
   markers: Record<string, { opacity: number; scale: number }>;
   /** Title cards visible at this instant, with their fade opacity. */
   titles: TitleState[];
+  /** Region id -> entrance progress. */
+  regions: Record<string, RegionState>;
   /**
    * Vehicle position and heading per route id, for routes that have one.
    * Absent while the leg is not in motion.

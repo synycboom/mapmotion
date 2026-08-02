@@ -59,6 +59,7 @@ import { Timeline } from '../components/Timeline';
 import { useNarrow, usePreviewFit } from '../lib/responsive';
 import { EditorShell } from '../components/EditorShell';
 import { Storyboard } from '../components/Storyboard';
+import { RegionPanel, type RegionSetting } from '../components/RegionPanel';
 import { initAnalytics, track, trackOnce } from '../lib/analytics';
 
 declare global {
@@ -141,6 +142,8 @@ export default function Editor() {
   const [contextLost, setContextLost] = useState(false);
   /** Which panel the rail has open; null means the map has the whole screen. */
   const [activePanel, setActivePanel] = useState<string | null>('trip');
+  /** Country/group highlights. Boundary geometry is fetched on demand. */
+  const [regions, setRegions] = useState<RegionSetting[]>([]);
   /** Lets the map's style.load handler reach the latest appearance. */
   const applyAppearanceRef = useRef<(() => void) | null>(null);
 
@@ -211,6 +214,7 @@ export default function Editor() {
       title,
       subtitle,
       outro,
+      regions,
     });
     if (audio) compiled.audio = audio.track;
     return compiled;
@@ -231,6 +235,7 @@ export default function Editor() {
     audio,
     pin,
     pinOverrides,
+    regions,
   ]);
 
   /**
@@ -1210,6 +1215,34 @@ export default function Editor() {
           }}
           pitch={appearance.pitch}
           onPitchChange={(deg) => setAppearance((a) => ({ ...a, pitch: deg }))}
+          disabled={exporting}
+        />
+      ),
+    },
+    {
+      id: 'regions',
+      label: 'Regions',
+      glyph: '▣',
+      hint: 'Highlight countries and groups',
+      badge: regions.length || null,
+      content: (
+        <RegionPanel
+          regions={regions}
+          onChange={(next) => {
+            const added = next.length > regions.length ? next[next.length - 1] : null;
+            if (added) trackOnce('region_added', { count: next.length });
+            setRegions(next);
+            if (added) {
+              // A highlight fades in from its entrance, so at playhead 0 a
+              // newly added one is invisible — you'd add it and see nothing
+              // change. Move the preview to just past its entrance so the
+              // result of the click is the thing you're looking at.
+              const dur = projectRef.current?.format.durationMs ?? 0;
+              const target = Math.min(dur, added.enterAt * dur + 900);
+              // One tick, so the recompiled project is in place first.
+              setTimeout(() => seek(target), 120);
+            }
+          }}
           disabled={exporting}
         />
       ),

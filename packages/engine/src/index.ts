@@ -13,3 +13,4 @@ export * from './title';
 export * from './framing';
 export * from './audio';
 export * from './exif';
+export * from './regions';
