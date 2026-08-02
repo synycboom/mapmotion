@@ -14,3 +14,4 @@ export * from './framing';
 export * from './audio';
 export * from './exif';
 export * from './regions';
+export * from './annotate';

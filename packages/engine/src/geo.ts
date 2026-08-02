@@ -145,3 +145,35 @@ export function sliceLine(
   }
   return out;
 }
+
+/**
+ * The point `meters` away from `origin` on a given bearing, along a great
+ * circle.
+ *
+ * Spherical rather than a flat offset in degrees. A "circle" drawn by adding
+ * a constant to longitude and latitude is an ellipse twice as wide as it is
+ * tall at 60°N — which looks like a bug at exactly the latitudes most people
+ * live at.
+ */
+export function destination(origin: LngLat, bearingDeg: number, meters: number): LngLat {
+  const R = 6371008.8;
+  const d = meters / R;
+  const brg = (bearingDeg * Math.PI) / 180;
+  const lat1 = (origin[1] * Math.PI) / 180;
+  const lng1 = (origin[0] * Math.PI) / 180;
+
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brg),
+  );
+  const lng2 =
+    lng1 +
+    Math.atan2(
+      Math.sin(brg) * Math.sin(d) * Math.cos(lat1),
+      Math.cos(d) - Math.sin(lat1) * Math.sin(lat2),
+    );
+
+  // Keep longitude in [-180, 180]; crossing the antimeridian otherwise
+  // produces coordinates MapLibre draws all the way round the world.
+  const lng = (((lng2 * 180) / Math.PI + 540) % 360) - 180;
+  return [lng, (lat2 * 180) / Math.PI];
+}

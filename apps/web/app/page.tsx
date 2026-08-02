@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import {
+  DEFAULT_ANNOTATION,
+  annotationSpec,
   autoStopZooms,
   beatPeriodMs,
   compileTrip,
@@ -11,6 +13,8 @@ import {
   tripSegments,
   DEFAULT_PIN,
   PIN_STYLES,
+  type Annotation,
+  type AnnotationKind,
   type AudioTrack,
   type ImportedTrack,
   type PinAppearance,
@@ -60,6 +64,11 @@ import { useNarrow, usePreviewFit } from '../lib/responsive';
 import { EditorShell } from '../components/EditorShell';
 import { Storyboard } from '../components/Storyboard';
 import { RegionPanel, type RegionSetting } from '../components/RegionPanel';
+import {
+  AnnotatePanel,
+  newAnnotation,
+  type AnnotationSetting,
+} from '../components/AnnotatePanel';
 import { initAnalytics, track, trackOnce } from '../lib/analytics';
 
 declare global {
@@ -144,6 +153,10 @@ export default function Editor() {
   const [activePanel, setActivePanel] = useState<string | null>('trip');
   /** Country/group highlights. Boundary geometry is fetched on demand. */
   const [regions, setRegions] = useState<RegionSetting[]>([]);
+  const [annotations, setAnnotations] = useState<AnnotationSetting[]>([]);
+  /** Index of the annotation currently collecting map clicks, or null. */
+  const [placing, setPlacing] = useState<number | null>(null);
+  const [selectedAnnotation, setSelectedAnnotation] = useState<number | null>(null);
   /** Lets the map's style.load handler reach the latest appearance. */
   const applyAppearanceRef = useRef<(() => void) | null>(null);
 
@@ -216,6 +229,32 @@ export default function Editor() {
       outro,
       regions,
     });
+    // Annotations are attached after compiling rather than passed in: they
+    // are positioned in absolute coordinates and timed as a fraction of the
+    // finished video, so they need the duration the compiler just produced.
+    const total = compiled.format.durationMs;
+    compiled.annotations = annotations
+      .filter((a) => a.coordinates.length >= (annotationSpec(a.kind)?.points ?? 1))
+      .map((a, i) => ({
+        id: `ann-${i}`,
+        kind: a.kind,
+        coordinates: a.coordinates.map((c) => [...c] as LngLat),
+        color: a.color,
+        opacity: 1,
+        enterMs: Math.round(a.enterAt * total),
+        enterDurationMs: DEFAULT_ANNOTATION.enterDurationMs,
+        exitMs: a.exitAt === null ? null : Math.round(a.exitAt * total),
+        exitDurationMs: DEFAULT_ANNOTATION.exitDurationMs,
+        text: a.text,
+        fontSize: a.fontSize,
+        haloColor: DEFAULT_ANNOTATION.haloColor,
+        imageUrl: a.imageUrl,
+        sizePx: a.sizePx,
+        widthPx: a.widthPx,
+        fillColor: a.color,
+        fillOpacity: a.fillOpacity,
+        dashed: a.dashed,
+      })) as Annotation[];
     if (audio) compiled.audio = audio.track;
     return compiled;
   }, [
@@ -236,6 +275,7 @@ export default function Editor() {
     pin,
     pinOverrides,
     regions,
+    annotations,
   ]);
 
   /**
@@ -449,8 +489,16 @@ export default function Editor() {
 
     playingRef.current = false;
     setPlaying(false);
-    playheadRef.current = 0;
-    setPlayheadMs(0);
+    // Clamp, don't reset. This effect fires on EVERY recompile, and since
+    // regions, annotations, camera and audio all recompile the project, a
+    // reset here throws the viewer back to the start of the video on every
+    // slider nudge — you'd move the tilt to look at something and lose the
+    // frame you were looking at. Replacing the trip outright (template,
+    // import, library load) resets the playhead explicitly at its own call
+    // site, which is where that decision belongs.
+    const held = Math.min(playheadRef.current, project.format.durationMs);
+    playheadRef.current = held;
+    setPlayheadMs(held);
 
     let cancelled = false;
     const applyChange = () => {
@@ -718,6 +766,68 @@ export default function Editor() {
     );
     setMode('studio');
     track('beat_snapped', { bpm: audio?.track.bpm ?? null, segments: dwells.length + legs.length });
+  };
+
+  /**
+   * Placement.
+   *
+   * The map is constructed with `interactive: false` — that is what makes
+   * preview and export pixel-identical, since nothing can pan or zoom it
+   * except the engine. So clicks can't come from MapLibre's own handlers.
+   * Instead a transparent overlay sits over the preview and unprojects the
+   * click itself, which keeps the map inert and still gives us coordinates.
+   */
+  const startPlacing = (kind: AnnotationKind) => {
+    const next = [...annotations, newAnnotation(kind)];
+    setAnnotations(next);
+    setPlacing(next.length - 1);
+    setSelectedAnnotation(next.length - 1);
+    setActivePanel('annotate');
+    trackOnce('annotation_added', { kind });
+  };
+
+  const cancelPlacing = () => {
+    // An annotation that never got its clicks has no geometry and would sit
+    // in the list doing nothing, so it goes with the cancellation.
+    setAnnotations((prev) =>
+      prev.filter(
+        (a, i) =>
+          i !== placing || a.coordinates.length >= (annotationSpec(a.kind)?.points ?? 1),
+      ),
+    );
+    setPlacing(null);
+  };
+
+  const placeAt = (clientX: number, clientY: number) => {
+    const map = mapRef.current;
+    const frame = containerRef.current;
+    if (map == null || frame == null || placing === null) return;
+
+    const rect = frame.getBoundingClientRect();
+    // The preview is CSS-scaled, so screen pixels have to be divided back out
+    // before unproject sees them — otherwise every placement lands short of
+    // the cursor by a factor of the zoom-to-fit.
+    const x = (clientX - rect.left) / scale;
+    const y = (clientY - rect.top) / scale;
+    const at = map.unproject([x, y]);
+    const coordinate: LngLat = [at.lng, at.lat];
+
+    setAnnotations((prev) => {
+      const next = [...prev];
+      const target = next[placing];
+      if (!target) return prev;
+      const needed = annotationSpec(target.kind)?.points ?? 1;
+      const coords = [...target.coordinates, coordinate].slice(-needed);
+      next[placing] = { ...target, coordinates: coords };
+      if (coords.length >= needed) {
+        // Done. Show it: an annotation entering at 0 is invisible at playhead
+        // 0, so the click would otherwise appear to do nothing.
+        setPlacing(null);
+        const dur = projectRef.current?.format.durationMs ?? 0;
+        setTimeout(() => seek(Math.min(dur, target.enterAt * dur + 700)), 120);
+      }
+      return next;
+    });
   };
 
   const runExport = async () => {
@@ -1248,6 +1358,25 @@ export default function Editor() {
       ),
     },
     {
+      id: 'annotate',
+      label: 'Notes',
+      glyph: '✎',
+      hint: 'Text, arrows and shapes on the map',
+      badge: annotations.length || null,
+      content: (
+        <AnnotatePanel
+          annotations={annotations}
+          onChange={setAnnotations}
+          placing={placing}
+          onStartPlacing={startPlacing}
+          onCancelPlacing={cancelPlacing}
+          selected={selectedAnnotation}
+          onSelect={setSelectedAnnotation}
+          disabled={exporting}
+        />
+      ),
+    },
+    {
       id: 'audio',
       label: 'Audio',
       glyph: '♪',
@@ -1441,6 +1570,21 @@ export default function Editor() {
           >
             {!project ? 'Add at least two stops to build an animation.' : 'Loading style…'}
           </div>
+        )}
+        {placing !== null && (
+          <div
+            data-testid="placement-overlay"
+            onClick={(e) => placeAt(e.clientX, e.clientY)}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              cursor: 'crosshair',
+              // Faintest possible tint: enough to signal the mode without
+              // changing what the map looks like while you aim.
+              background: 'rgba(232,89,12,0.06)',
+              zIndex: 3,
+            }}
+          />
         )}
         {contextLost && (
           <div

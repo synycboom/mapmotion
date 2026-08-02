@@ -7,6 +7,7 @@ import type {
 import { ease } from './easing';
 import { flyInterpolate } from './camera';
 import { titlesAt } from './title';
+import { annotationsAt } from './annotate';
 import { cumulativeDistances, pointAtProgress } from './geo';
 
 /**
@@ -54,6 +55,7 @@ export function sceneAt(project: Project, tMs: number): FrameState {
     routeProgress,
     titles: titlesAt(project.titles ?? [], tMs),
     regions,
+    annotations: annotationsAt(project.annotations ?? [], tMs),
     vehicles,
     markers: Object.fromEntries(
       project.markers.map((m) => {

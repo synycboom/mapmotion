@@ -10,6 +10,7 @@
  */
 
 import type { AudioTrack } from './audio';
+import type { Annotation, AnnotationState } from './annotate';
 import type { RegionState, RegionTrack } from './regions';
 import type { TitleCard, TitleState } from './title';
 import type { TravelMode } from './travel';
@@ -100,6 +101,8 @@ export interface Project {
   markers: MarkerTrack[];
   /** Highlighted countries and groups. Geometry lives in the app. */
   regions?: RegionTrack[];
+  /** Text, images and shapes anchored to the map. */
+  annotations?: Annotation[];
   /** Intro/outro text cards. */
   titles: TitleCard[];
   /**
@@ -121,6 +124,8 @@ export interface FrameState {
   titles: TitleState[];
   /** Region id -> entrance progress. */
   regions: Record<string, RegionState>;
+  /** Annotation id -> fade and draw-on progress. */
+  annotations: Record<string, AnnotationState>;
   /**
    * Vehicle position and heading per route id, for routes that have one.
    * Absent while the leg is not in motion.

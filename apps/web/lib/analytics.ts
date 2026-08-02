@@ -49,7 +49,8 @@ export type AnalyticsEvent =
   | 'audio_added'
   | 'beat_snapped'
   | 'photos_imported'
-  | 'region_added';
+  | 'region_added'
+  | 'annotation_added';
 
 export type EventProps = Record<string, string | number | boolean | null | undefined>;
 

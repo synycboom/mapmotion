@@ -7,6 +7,12 @@ import {
 } from '@mapmotion/engine';
 import { ensureMarkerImages, ensureVehicleIcons, vehicleImageId } from './vehicleIcons';
 import { countriesIfLoaded, loadCountries } from './countries';
+import {
+  ANNOTATION_SOURCES,
+  annotationImageId,
+  annotationLayers,
+  buildAnnotationGeometry,
+} from './annotationLayers';
 import { DEFAULT_PIN } from '@mapmotion/engine';
 
 /** Prefix for every user-supplied marker image, so stale ones can be swept. */
@@ -196,6 +202,21 @@ export class FrameApplier {
     }
   }
 
+  /**
+   * Annotation sources and layers.
+   *
+   * Installed whenever the project has any, with empty sources — the geometry
+   * arrives per frame, because lines and arrows draw themselves in and the
+   * shape at t=0.3 is genuinely a different shape, not a faded one.
+   */
+  private installAnnotations(): void {
+    if ((this.project.annotations?.length ?? 0) === 0) return;
+    for (const id of Object.values(ANNOTATION_SOURCES)) {
+      this.addSource(id, { type: 'geojson', data: emptyCollection() });
+    }
+    for (const spec of annotationLayers()) this.addLayer(spec);
+  }
+
   /** Marker images the project needs, as (sprite id, source URL) pairs. */
   markerImages(): Array<{ id: string; url: string }> {
     return this.project.markers
@@ -203,10 +224,17 @@ export class FrameApplier {
       .map((m) => ({ id: markerImageId(m.id, m.pin!.imageUrl), url: m.pin!.imageUrl! }));
   }
 
+  /** Images used by annotations, on the same sprite path as marker photos. */
+  private annotationImages(): Array<{ id: string; url: string }> {
+    return (this.project.annotations ?? [])
+      .filter((a): a is Extract<typeof a, { kind: 'image' }> => a.kind === 'image' && !!a.imageUrl)
+      .map((a) => ({ id: annotationImageId(a.id, a.imageUrl), url: a.imageUrl }));
+  }
+
   async ensureIcons(): Promise<void> {
     await Promise.all([
       ensureVehicleIcons(this.map, this.vehiclePairs()),
-      ensureMarkerImages(this.map, this.markerImages()),
+      ensureMarkerImages(this.map, [...this.markerImages(), ...this.annotationImages()]),
       // Boundary geometry is a network fetch, so the export path has to await
       // it too — otherwise the first frames would render without their fills.
       (this.project.regions?.length ?? 0) > 0
@@ -222,6 +250,7 @@ export class FrameApplier {
     const map = this.map;
 
     this.installRegions();
+    this.installAnnotations();
 
     for (const r of this.project.routes) {
       this.addSource(`route-${r.id}`, {
@@ -424,6 +453,13 @@ export class FrameApplier {
       pitch: frame.camera.pitch,
     });
 
+    if ((this.project.annotations?.length ?? 0) > 0) {
+      const geo = buildAnnotationGeometry(this.project.annotations!, frame);
+      setData(map, ANNOTATION_SOURCES.line, geo.lines);
+      setData(map, ANNOTATION_SOURCES.fill, geo.fills);
+      setData(map, ANNOTATION_SOURCES.point, geo.points);
+    }
+
     for (const r of this.project.regions ?? []) {
       const progress = frame.regions[r.id]?.progress ?? 0;
       // Paint properties, not feature-state: the fill is per LAYER (one
@@ -520,6 +556,7 @@ function isOwnedLayer(id: string): boolean {
     id.startsWith('route-head-') ||
     id.startsWith('route-vehicle-') ||
     id.startsWith('region-') ||
+    id.startsWith('annotation-') ||
     false
   );
 }
@@ -530,7 +567,8 @@ function isOwnedSource(id: string): boolean {
     id.startsWith('head-') ||
     id.startsWith('vehicle-') ||
     id === 'markers' ||
-    id === COUNTRIES_SOURCE
+    id === COUNTRIES_SOURCE ||
+    id.startsWith('mm-ann-')
   );
 }
 
@@ -563,4 +601,15 @@ function firstSymbolLayer(map: MLMap): string | undefined {
     if (l.type === 'symbol' && !isOwnedLayer(l.id)) return l.id;
   }
   return undefined;
+}
+
+
+function emptyCollection(): GeoJSON.FeatureCollection {
+  return { type: 'FeatureCollection', features: [] };
+}
+
+/** Set a source's data if it exists. A frame can land mid style-swap. */
+function setData(map: MLMap, id: string, data: GeoJSON.FeatureCollection): void {
+  const src = map.getSource(id) as maplibregl.GeoJSONSource | undefined;
+  src?.setData(data);
 }

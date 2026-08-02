@@ -53,6 +53,31 @@ The funnel is `editor_opened` → `project_edited` → `preview_played` →
 2. The engine never reads from the map; it only writes FrameState to it (`jumpTo`, never `easeTo`).
 3. Easing/interpolation are pure functions, unit-tested against golden values.
 
+## Annotations
+
+Text, images, arrows, lines, boxes and circles pinned to real coordinates —
+they move with the map, fade in when you choose, and can fade out again.
+
+One object model, not three features. They differ only in what they draw;
+anchoring, timing, entrance, exit and opacity are shared, and building them
+separately would mean three subtly different answers to "when does this
+disappear".
+
+Placement works by clicking the map, which needed care: the map is built with
+`interactive: false`, and that is exactly what makes preview and export
+pixel-identical, since nothing but the engine can move it. So a transparent
+overlay sits over the preview and unprojects the click itself — the map stays
+inert and we still get a coordinate. The overlay divides out the preview's CSS
+scale first; without that every placement lands short of the cursor by the
+zoom-to-fit factor.
+
+Circles are geodesic. A "circle" drawn by adding a constant to longitude and
+latitude is an ellipse twice as wide as it is tall at 60°N, which is where a
+lot of people live. Arrowheads are sized in metres relative to the shaft, so
+they scale with the map instead of swamping a short arrow, and they only
+appear once the shaft is 60% drawn — a head that leads its own line reads as
+two separate marks.
+
 ## Region highlighting
 
 Fill whole countries or named groups — EU, ASEAN, Schengen, G7, BRICS, MENA,
@@ -223,7 +248,7 @@ to point at a different OSRM-compatible instance.
 ## Tests
 
 ```bash
-npm test                                    # 269 engine unit tests
+npm test                                    # 304 engine unit tests
 node apps/web/e2e/export-test.mjs           # headless export proof
 xvfb-run -a node apps/web/e2e/headful-style-test.mjs   # remote vector style + export
 xvfb-run -a node apps/web/e2e/quickmode-test.mjs       # full Quick mode UI flow
@@ -242,6 +267,7 @@ xvfb-run -a node apps/web/e2e/analytics-test.mjs      # funnel events + no-leak 
 xvfb-run -a node apps/web/e2e/audio-test.mjs          # beat detection, snapping, muxed audio
 xvfb-run -a node apps/web/e2e/photos-test.mjs         # EXIF import, photos as pins
 xvfb-run -a node apps/web/e2e/regions-test.mjs        # country fills, layering, animation
+xvfb-run -a node apps/web/e2e/annotate-test.mjs       # placement, shapes, timing
 ```
 
 Suites bind different ports and can run back to back, but not in parallel —
