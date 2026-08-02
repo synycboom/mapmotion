@@ -4,6 +4,7 @@ import { chromium } from 'playwright-core';
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, writeFileSync, statSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 import { rawStats } from './imgstats.mjs';
 
 const PORT = 3230;
@@ -55,15 +56,15 @@ await page.goto(
 await page.waitForTimeout(4000);
 
 console.log('\n[gif] format toggle');
-(await page.locator('[data-testid="export-format-gif"]').count()) === 1
+(await (await reveal(page, 'export-format-gif')).count()) === 1
   ? pass('GIF format option is offered')
   : fail('GIF format option is offered');
 
-await page.locator('[data-testid="export-format-gif"]').click();
+await click(page, 'export-format-gif');
 await page.waitForTimeout(500);
-(await page.locator('[data-testid="export-button"]').innerText()).includes('GIF')
+(await (await reveal(page, 'export-button')).innerText()).includes('GIF')
   ? pass('export button reflects the chosen format')
-  : fail('export button reflects the chosen format', await page.locator('[data-testid="export-button"]').innerText());
+  : fail('export button reflects the chosen format', await (await reveal(page, 'export-button')).innerText());
 
 console.log('\n[gif] export');
 const href = await page.evaluate(async () => {
@@ -130,9 +131,9 @@ if (!href) {
 
 // Switching back to video must still work.
 console.log('\n[gif] switching back to video');
-await page.locator('[data-testid="export-format-video"]').click();
+await click(page, 'export-format-video');
 await page.waitForTimeout(400);
-(await page.locator('[data-testid="export-button"]').innerText()).includes('video')
+(await (await reveal(page, 'export-button')).innerText()).includes('video')
   ? pass('can switch back to video export')
   : fail('can switch back to video export');
 

@@ -5,6 +5,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 
 const PORT = 3220;
 const exe = [
@@ -74,7 +75,7 @@ for (const layer of ['marker-dots', 'marker-sprites', 'marker-emoji', 'marker-bu
 if (Object.keys(checks).length === 1) pass('all marker layers installed');
 
 console.log('\n[pins] switching styles');
-await page.locator('[data-testid="pin-pin"]').click();
+await click(page, 'pin-pin');
 await page.waitForTimeout(2500);
 (await markerStyles()).every((s) => s === 'pin')
   ? pass('choosing "Pin" restyles every marker')
@@ -83,13 +84,13 @@ await page.waitForTimeout(2500);
   ? pass('pin sprite is rasterised and registered')
   : fail('pin sprite is rasterised and registered', JSON.stringify(await spriteIds()));
 
-await page.locator('[data-testid="pin-marker"]').click();
+await click(page, 'pin-marker');
 await page.waitForTimeout(2500);
 (await spriteIds()).some((i) => i.includes('markershape'))
   ? pass('marker sprite registered')
   : fail('marker sprite registered');
 
-await page.locator('[data-testid="pin-emoji"]').click();
+await click(page, 'pin-emoji');
 await page.waitForTimeout(1200);
 // Emoji with no character set must fall back rather than render nothing.
 (await markerStyles()).every((s) => s === 'dot')
@@ -97,9 +98,9 @@ await page.waitForTimeout(1200);
   : fail('emoji with no character falls back to dot', JSON.stringify(await markerStyles()));
 
 // The emoji field only renders while the emoji style is selected.
-const hasField = (await page.locator('[data-testid="pin-emoji-input"]').count()) > 0;
+const hasField = (await (await reveal(page, 'pin-emoji-input')).count()) > 0;
 if (hasField) {
-  await page.locator('[data-testid="pin-emoji-input"]').fill('⛰');
+  await (await reveal(page, 'pin-emoji-input')).fill('⛰');
   await page.waitForTimeout(2000);
   (await markerStyles()).every((s) => s === 'emoji')
     ? pass('setting an emoji activates the emoji style')
@@ -108,7 +109,7 @@ if (hasField) {
   fail('setting an emoji activates the emoji style', 'emoji field not rendered');
 }
 
-await page.locator('[data-testid="pin-bubble"]').click();
+await click(page, 'pin-bubble');
 await page.waitForTimeout(2000);
 const bubbleFeatures = await page.evaluate(() => {
   const src = window.__map?.getSource('markers');
@@ -123,14 +124,14 @@ bubbleFeatures.every((f) => f.style === 'bubble' && f.showLabel === 0 && f.bubbl
   ? pass('bubble carries the name and suppresses the duplicate label')
   : fail('bubble carries the name and suppresses the duplicate label', JSON.stringify(bubbleFeatures[0]));
 
-await page.locator('[data-testid="pin-none"]').click();
+await click(page, 'pin-none');
 await page.waitForTimeout(1500);
 (await markerStyles()).every((s) => s === 'none')
   ? pass('"Hidden" removes markers from every layer')
   : fail('"Hidden" removes markers from every layer');
 
 console.log('\n[pins] colour and size');
-await page.locator('[data-testid="pin-dot"]').click();
+await click(page, 'pin-dot');
 await page.waitForTimeout(1200);
 await page.evaluate(() => {
   const el = document.querySelector('[data-testid="pin-size"]');
@@ -151,13 +152,13 @@ sizes.every((s) => s > 2)
 await page.screenshot({ path: '/tmp/pins.png' });
 
 console.log('\n[pins] persistence');
-await page.locator('[data-testid="pin-pin"]').click();
+await click(page, 'pin-pin');
 await page.waitForTimeout(1200);
-await page.locator('[data-testid="save-project"]').click();
+await click(page, 'save-project');
 await page.waitForTimeout(800);
-await page.locator('[data-testid="pin-dot"]').click();
+await click(page, 'pin-dot');
 await page.waitForTimeout(1200);
-await page.locator('[data-testid="toggle-library"]').click();
+await click(page, 'toggle-library');
 await page.waitForTimeout(600);
 await page.locator('[data-testid="project-item"] button').first().click();
 await page.waitForTimeout(2500);

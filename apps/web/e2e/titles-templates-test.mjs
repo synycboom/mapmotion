@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 import { durationOf, rawStats } from './imgstats.mjs';
 
 const PORT = 3160;
@@ -76,17 +77,17 @@ console.log('\n[templates]');
 await page.goto(`http://localhost:${PORT}/?style=minimal`, { waitUntil: 'load' });
 await page.waitForTimeout(3500);
 
-await page.locator('[data-testid="template-road-trip"]').click();
+await click(page, 'template-road-trip');
 await page.waitForTimeout(3000);
 (await stopCount()) === 4 ? pass('road-trip template loads 4 stops') : fail('road-trip template loads 4 stops', await stopCount());
 const names = (await page.locator('[data-testid="stop-list"] li').allInnerTexts()).join(' ');
 names.includes('Monterey') ? pass('template stops are correct') : fail('template stops are correct', names.slice(0, 80));
-const legMode = await page.locator('[data-testid="leg-0"]').getAttribute('data-mode');
+const legMode = await (await reveal(page, 'leg-0')).getAttribute('data-mode');
 legMode === 'car' ? pass('road-trip sets drive legs') : fail('road-trip sets drive legs', legMode);
-const titleVal = await page.locator('[data-testid="title-input"]').inputValue();
+const titleVal = await (await reveal(page, 'title-input')).inputValue();
 titleVal === 'Road trip' ? pass('template fills the title card') : fail('template fills the title card', titleVal);
 
-await page.locator('[data-testid="template-vertical-shorts"]').click();
+await click(page, 'template-vertical-shorts');
 await page.waitForTimeout(3000);
 const canvasSize = await page.evaluate(() => {
   const c = document.querySelector('.maplibregl-canvas');
@@ -97,10 +98,10 @@ canvasSize.w === 720 && canvasSize.h === 1280
   : fail('vertical template switches to 9:16', JSON.stringify(canvasSize));
 
 console.log('\n[titles]');
-await page.locator('[data-testid="template-world-tour"]').click();
+await click(page, 'template-world-tour');
 await page.waitForTimeout(3000);
-await page.locator('[data-testid="title-input"]').fill('Around the World');
-await page.locator('[data-testid="subtitle-input"]').fill('2026');
+await (await reveal(page, 'title-input')).fill('Around the World');
+await (await reveal(page, 'subtitle-input')).fill('2026');
 await page.waitForTimeout(1500);
 
 await seekTo(0.02);
@@ -115,7 +116,7 @@ await seekTo(0.99);
 const inkEndNoOutro = await overlayInk();
 inkEndNoOutro < 0.0005 ? pass('no end card unless enabled') : fail('no end card unless enabled', inkEndNoOutro);
 
-await page.locator('[data-testid="outro-toggle"]').check();
+await (await reveal(page, 'outro-toggle')).check();
 await page.waitForTimeout(1500);
 await seekTo(0.985);
 const inkEnd = await overlayInk();
@@ -130,7 +131,7 @@ await page.goto(
   { waitUntil: 'load' },
 );
 await page.waitForTimeout(3500);
-await page.locator('[data-testid="title-input"]').fill('TITLE TEST');
+await (await reveal(page, 'title-input')).fill('TITLE TEST');
 await page.waitForTimeout(1500);
 
 const href = await page.evaluate(async () => {

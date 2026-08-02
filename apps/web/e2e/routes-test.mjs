@@ -8,6 +8,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, openPanel, reveal } from './ui.mjs';
 import { startMockRouter } from './mock-router.mjs';
 
 const exe = [
@@ -143,7 +144,7 @@ await withRouter('ok', 3224, 3143, async (port) => {
   };
 
   await page.locator('[data-testid="leg-0"]').waitFor({ timeout: 10_000 });
-  (await page.locator('[data-testid="leg-0"]').getAttribute('data-mode')) === 'air'
+  (await (await reveal(page, 'leg-0')).getAttribute('data-mode')) === 'air'
     ? pass('legs default to flight')
     : fail('legs default to flight');
 
@@ -152,13 +153,14 @@ await withRouter('ok', 3224, 3143, async (port) => {
   arc.n === 97 ? pass('flight leg draws a 97-point arc') : fail('flight leg draws a 97-point arc', `${arc.n} ${arc.why}`);
 
   // Switch to drive.
+  await openPanel(page, 'trip');
   await page.getByRole('button', { name: 'Leg 1 as Car' }).click();
   await page.waitForFunction(
     () => document.querySelector('[data-testid="leg-0"]')?.getAttribute('data-status') === 'ok',
     null,
     { timeout: 20_000 },
   ).catch(() => {});
-  const status = await page.locator('[data-testid="leg-0"]').getAttribute('data-status');
+  const status = await (await reveal(page, 'leg-0')).getAttribute('data-status');
   status === 'ok' ? pass('drive leg resolves road geometry') : fail('drive leg resolves road geometry', status);
 
   // Geometry arriving recompiles the project and resets the playhead, so a
@@ -179,7 +181,7 @@ await withRouter('ok', 3224, 3143, async (port) => {
   page.url().includes('l=d') ? pass('URL encodes leg mode') : fail('URL encodes leg mode', page.url());
   await page.goto(page.url(), { waitUntil: 'load' });
   await page.waitForTimeout(4000);
-  (await page.locator('[data-testid="leg-0"]').getAttribute('data-mode')) === 'car'
+  (await (await reveal(page, 'leg-0')).getAttribute('data-mode')) === 'car'
     ? pass('reload restores drive mode')
     : fail('reload restores drive mode');
 
@@ -198,7 +200,7 @@ await withRouter('fail', 3225, 3144, async (port) => {
   await page.goto(`http://localhost:${port}/?${TRIP}&l=d&style=minimal`, { waitUntil: 'load' });
   await page.waitForTimeout(5000);
 
-  const status = await page.locator('[data-testid="leg-0"]').getAttribute('data-status');
+  const status = await (await reveal(page, 'leg-0')).getAttribute('data-status');
   status === 'fallback'
     ? pass('failed routing marks the leg as fallback')
     : fail('failed routing marks the leg as fallback', status);

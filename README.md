@@ -53,6 +53,26 @@ The funnel is `editor_opened` → `project_edited` → `preview_played` →
 2. The engine never reads from the map; it only writes FrameState to it (`jumpTo`, never `easeTo`).
 3. Easing/interpolation are pure functions, unit-tested against golden values.
 
+## Editor layout
+
+The editor is a rail of grouped panels — Trip, Style, Camera, Audio, Titles,
+Output — with one open at a time, the map taking the remaining room, and a
+storyboard strip under it showing the trip as stops and travel legs with their
+durations.
+
+It replaced a single scrolling sidebar. That was fine at four sections and a
+scroll-hunt at fourteen: Camera and Soundtrack both sat below the fold, and on
+a phone every control was underneath the map. The problem also got
+monotonically worse with each feature shipped, so the cost of leaving it only
+grew. Adding a feature now means adding to a group rather than lengthening a
+scroll.
+
+E2E suites reach controls through `e2e/ui.mjs`, which opens panels until the
+control appears. A test-only "expand everything" flag would have been less
+work and would have left the suites exercising a layout no user ever sees —
+and in a restructure the thing most likely to break is precisely whether a
+control is still reachable.
+
 ## Camera
 
 Framing defaults to **Auto**: each stop's zoom comes from the distance to its

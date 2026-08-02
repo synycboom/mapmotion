@@ -5,6 +5,7 @@ import { chromium } from 'playwright-core';
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 
 const PORT = 3111;
 const CHROMIUM_CANDIDATES = [

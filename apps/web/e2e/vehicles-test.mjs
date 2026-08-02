@@ -8,6 +8,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 import { startMockRouter } from './mock-router.mjs';
 import { durationOf, rawStats } from './imgstats.mjs';
 
@@ -112,9 +113,9 @@ await page.goto(
 );
 await page.waitForTimeout(4000);
 
-(await page.locator('[data-testid="leg-0"]').getAttribute('data-mode')) === 'air'
+(await (await reveal(page, 'leg-0')).getAttribute('data-mode')) === 'air'
   ? pass('legs default to flight')
-  : fail('legs default to flight', await page.locator('[data-testid="leg-0"]').getAttribute('data-mode'));
+  : fail('legs default to flight', await (await reveal(page, 'leg-0')).getAttribute('data-mode'));
 
 const iconRegistered = await page.evaluate(() => {
   const map = window.__map;
@@ -154,15 +155,15 @@ const atStart = await vehicleAt(0);
   : fail('vehicle hidden before the leg starts', JSON.stringify(atStart));
 
 console.log('\n[ui] switching modes');
-await page.locator('[data-testid="leg-0-more"]').click();
+await click(page, 'leg-0-more');
 await page.waitForTimeout(500);
-(await page.locator('[data-testid="leg-0-menu"]').count()) === 1
+(await (await reveal(page, 'leg-0-menu')).count()) === 1
   ? pass('more-modes menu opens')
   : fail('more-modes menu opens');
 
-await page.locator('[data-testid="leg-0-mode-sea"]').click();
+await click(page, 'leg-0-mode-sea');
 await page.waitForTimeout(2000);
-(await page.locator('[data-testid="leg-0"]').getAttribute('data-mode')) === 'sea'
+(await (await reveal(page, 'leg-0')).getAttribute('data-mode')) === 'sea'
   ? pass('selecting ferry updates the leg')
   : fail('selecting ferry updates the leg');
 
@@ -172,9 +173,9 @@ const ferryIcons = await page.evaluate(() =>
 ferryIcons.length > 0 ? pass('ferry sprite registered on switch') : fail('ferry sprite registered on switch');
 
 // Direct mode has no vehicle at all — the head dot returns.
-await page.locator('[data-testid="leg-0-more"]').click();
+await click(page, 'leg-0-more');
 await page.waitForTimeout(400);
-await page.locator('[data-testid="leg-0-mode-direct"]').click();
+await click(page, 'leg-0-mode-direct');
 await page.waitForTimeout(2000);
 const direct = await vehicleAt(0.5);
 !direct.present
@@ -188,7 +189,7 @@ await page.goto(
 );
 await page.waitForTimeout(5000);
 await page.waitForSelector('[data-testid="leg-0-metrics"]', { timeout: 15_000 }).catch(() => {});
-const metricsText = await page.locator('[data-testid="leg-0-metrics"]').innerText().catch(() => '');
+const metricsText = await (await reveal(page, 'leg-0-metrics')).innerText().catch(() => '');
 /\d/.test(metricsText)
   ? pass(`driving leg shows distance/duration ("${metricsText}")`)
   : fail('driving leg shows distance/duration', metricsText || 'absent');

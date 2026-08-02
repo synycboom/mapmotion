@@ -8,6 +8,7 @@ import { chromium } from 'playwright-core';
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal, setRange } from './ui.mjs';
 import { startMockTileServer } from './mock-tileserver.mjs';
 
 const APP_PORT = 3300;
@@ -106,19 +107,19 @@ await page.goto(
 await page.waitForTimeout(5000);
 
 console.log('\n[audio] import + detection');
-(await page.locator('[data-testid="audio-panel"]').count()) === 1
+(await (await reveal(page, 'audio-panel')).count()) === 1
   ? pass('audio panel renders')
   : fail('audio panel renders');
 
-await page.locator('[data-testid="audio-input"]').setInputFiles(WAV);
+await (await reveal(page, 'audio-input')).setInputFiles(WAV);
 // Decoding plus analysis of 20s of audio; give it room on software GL.
 await page.waitForTimeout(6000);
 
-(await page.locator('[data-testid="audio-name"]').count()) === 1
+(await (await reveal(page, 'audio-name')).count()) === 1
   ? pass('the file is accepted')
-  : fail('the file is accepted', await page.locator('[data-testid="audio-error"]').innerText().catch(() => ''));
+  : fail('the file is accepted', await (await reveal(page, 'audio-error')).innerText().catch(() => ''));
 
-const tempoText = await page.locator('[data-testid="audio-tempo"]').innerText().catch(() => '');
+const tempoText = await (await reveal(page, 'audio-tempo')).innerText().catch(() => '');
 const detectedBpm = Number(tempoText.match(/([\d.]+)\s*BPM/)?.[1] ?? NaN);
 Math.abs(detectedBpm - BPM) < 3
   ? pass(`detects the true tempo in a real file (${detectedBpm} BPM)`)
@@ -129,12 +130,12 @@ beatCount > 30
   ? pass(`beats reach the compiled project (${beatCount} over ${AUDIO_SECONDS}s)`)
   : fail('beats reach the compiled project', beatCount);
 
-(await page.locator('[data-testid="audio-waveform"]').count()) === 1
+(await (await reveal(page, 'audio-waveform')).count()) === 1
   ? pass('the waveform renders')
   : fail('the waveform renders');
 
 console.log('\n[audio] cut to the beat');
-await page.locator('[data-testid="audio-snap"]').click();
+await click(page, 'audio-snap');
 await page.waitForTimeout(2500);
 
 // Every segment must now be a whole number of half-beats, so every boundary
@@ -168,8 +169,8 @@ Math.abs(grid.period - (60 / BPM) * 1000) < 12
 
 // Snapping should move to Studio mode so the result is visible and editable
 // rather than a hidden change to the timing.
-(await page.locator('[data-testid="mode-studio"]').getAttribute('style'))?.includes('232, 89, 12') ||
-(await page.locator('[data-testid="timeline"]').count()) > 0
+(await (await reveal(page, 'mode-studio')).getAttribute('style'))?.includes('232, 89, 12') ||
+(await (await reveal(page, 'timeline')).count()) > 0
   ? pass('snapping reveals the retimed timeline')
   : fail('snapping reveals the retimed timeline');
 
@@ -260,24 +261,24 @@ if (!href) {
     reported === 'unsupported-encoder' || reported === 'failed'
       ? pass(`no encoder here, and the app says so ("${reported}")`)
       : fail('no encoder here, and the app says so', `reported "${reported}"`);
-    (await page.locator('[data-testid="audio-outcome"]').count()) === 1
+    (await (await reveal(page, 'audio-outcome')).count()) === 1
       ? pass('the user is told the video is silent')
       : fail('the user is told the video is silent');
   }
 }
 
 console.log('\n[audio] removal');
-await page.locator('[data-testid="audio-remove"]').click();
+await click(page, 'audio-remove');
 await page.waitForTimeout(800);
-(await page.locator('[data-testid="audio-drop"]').count()) === 1
+(await (await reveal(page, 'audio-drop')).count()) === 1
   ? pass('the soundtrack can be removed')
   : fail('the soundtrack can be removed');
 
 console.log('\n[audio] rejecting rubbish');
 writeFileSync('/tmp/mm-not-audio.wav', Buffer.from('this is definitely not audio data', 'utf8'));
-await page.locator('[data-testid="audio-input"]').setInputFiles('/tmp/mm-not-audio.wav');
+await (await reveal(page, 'audio-input')).setInputFiles('/tmp/mm-not-audio.wav');
 await page.waitForTimeout(3000);
-(await page.locator('[data-testid="audio-error"]').count()) === 1
+(await (await reveal(page, 'audio-error')).count()) === 1
   ? pass('an undecodable file produces an error, not a crash')
   : fail('an undecodable file produces an error, not a crash');
 

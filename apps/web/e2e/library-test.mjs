@@ -5,6 +5,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, openPanel, reveal } from './ui.mjs';
 
 const PORT = 3170;
 const exe = [
@@ -59,7 +60,12 @@ const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 
-const stopCount = () => page.locator('[data-testid="stop-list"] li').count();
+// The stop list lives in the Trip panel and the library in Output, so a
+// count taken right after opening the library would see a closed panel.
+const stopCount = async () => {
+  await reveal(page, 'stop-list');
+  return page.locator('[data-testid="stop-list"] li').count();
+};
 const routePoints = () =>
   page.evaluate(() => {
     const map = window.__map;
@@ -71,14 +77,16 @@ const routePoints = () =>
   });
 /** Toggling blindly can close an already-open panel; ensure the state. */
 const openLibrary = async () => {
+  await openPanel(page, 'output');
   if ((await page.locator('[data-testid="project-list"]').count()) === 0) {
-    await page.locator('[data-testid="toggle-library"]').click();
+    await click(page, 'toggle-library');
     await page.waitForTimeout(500);
   }
 };
 const closeLibrary = async () => {
+  await openPanel(page, 'output');
   if ((await page.locator('[data-testid="project-list"]').count()) > 0) {
-    await page.locator('[data-testid="toggle-library"]').click();
+    await click(page, 'toggle-library');
     await page.waitForTimeout(300);
   }
 };
@@ -112,13 +120,13 @@ await page.goto(`http://localhost:${PORT}/?style=minimal`, { waitUntil: 'load' }
 await page.waitForTimeout(3500);
 
 // Import a track, title it, save it.
-await page.locator('[data-testid="track-file-input"]').setInputFiles('/tmp/mm-fixtures/lib-ride.gpx');
+await (await reveal(page, 'track-file-input')).setInputFiles('/tmp/mm-fixtures/lib-ride.gpx');
 await page.waitForTimeout(2500);
-await page.locator('[data-testid="title-input"]').fill('Saved Ride');
+await (await reveal(page, 'title-input')).fill('Saved Ride');
 await page.waitForTimeout(1200);
 const importedPoints = await drawnPoints();
 
-await page.locator('[data-testid="save-project"]').click();
+await click(page, 'save-project');
 await page.waitForTimeout(800);
 await openLibrary();
 const listed = await page.locator('[data-testid="project-item"]').count();
@@ -126,7 +134,7 @@ listed === 1 ? pass('saved project appears in the library') : fail('saved projec
 
 // Wipe the editor by loading a template, then load the saved project back.
 await closeLibrary();
-await page.locator('[data-testid="template-city-hops"]').click();
+await click(page, 'template-city-hops');
 await page.waitForTimeout(2500);
 (await stopCount()) === 5 ? pass('template replaced the trip') : fail('template replaced the trip', await stopCount());
 
@@ -135,10 +143,10 @@ await page.locator('[data-testid="project-item"] button').first().click();
 await page.waitForTimeout(2500);
 
 (await stopCount()) === 2 ? pass('loading restores the saved stops') : fail('loading restores the saved stops', await stopCount());
-(await page.locator('[data-testid="title-input"]').inputValue()) === 'Saved Ride'
+(await (await reveal(page, 'title-input')).inputValue()) === 'Saved Ride'
   ? pass('loading restores the title')
   : fail('loading restores the title');
-const mode = await page.locator('[data-testid="leg-0"]').getAttribute('data-mode');
+const mode = await (await reveal(page, 'leg-0')).getAttribute('data-mode');
 mode === 'file' ? pass('loading restores track mode') : fail('loading restores track mode', mode);
 
 const restoredPoints = await drawnPoints();
@@ -187,7 +195,7 @@ console.log('\n[library] delete');
 await page.evaluate(() => localStorage.removeItem('mapmotion.projects.v1'));
 await page.reload({ waitUntil: 'load' });
 await page.waitForTimeout(3500);
-await page.locator('[data-testid="save-project"]').click();
+await click(page, 'save-project');
 await page.waitForTimeout(600);
 await openLibrary();
 const before = await page.locator('[data-testid="project-item"]').count();

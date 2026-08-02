@@ -13,6 +13,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 import { startMockTileServer } from './mock-tileserver.mjs';
 import { rawStats } from './imgstats.mjs';
 

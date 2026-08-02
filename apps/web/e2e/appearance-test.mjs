@@ -5,6 +5,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, openPanel, reveal, setRange } from './ui.mjs';
 import { startMockTileServer } from './mock-tileserver.mjs';
 
 const APP_PORT = 3240;
@@ -86,7 +87,7 @@ await page.goto(
 );
 await page.waitForTimeout(5000);
 
-(await page.locator('[data-testid="appearance-panel"]').count()) === 1
+(await (await reveal(page, 'appearance-panel')).count()) === 1
   ? pass('appearance panel renders')
   : fail('appearance panel renders');
 
@@ -94,58 +95,54 @@ await page.waitForTimeout(5000);
   ? pass('labels start visible')
   : fail('labels start visible', await labelVisibility());
 
-await page.locator('[data-testid="label-places"]').click();
+await click(page, 'label-places');
 await page.waitForTimeout(1200);
 (await labelVisibility()) === 'none'
   ? pass('hiding "cities & towns" hides the style layer')
   : fail('hiding "cities & towns" hides the style layer', await labelVisibility());
-(await page.locator('[data-testid="label-places"]').getAttribute('data-on')) === '0'
+(await (await reveal(page, 'label-places')).getAttribute('data-on')) === '0'
   ? pass('chip reflects the off state')
   : fail('chip reflects the off state');
 
 // Categories with no layers in this style must be disabled, not silently no-op.
-(await page.locator('[data-testid="label-water"]').isDisabled())
+(await (await reveal(page, 'label-water')).isDisabled())
   ? pass('categories absent from the basemap are disabled')
   : fail('categories absent from the basemap are disabled');
 
-await page.locator('[data-testid="label-places"]').click();
+await click(page, 'label-places');
 await page.waitForTimeout(1000);
 (await labelVisibility()) === 'visible'
   ? pass('re-enabling restores the layer')
   : fail('re-enabling restores the layer');
 
-await page.locator('[data-testid="labels-toggle-all"]').click();
+await click(page, 'labels-toggle-all');
 await page.waitForTimeout(1000);
 (await labelVisibility()) === 'none'
   ? pass('"None" clears every category')
   : fail('"None" clears every category', await labelVisibility());
 
 console.log('\n[appearance] tilt + terrain + projection');
-await page.evaluate(() => {
-  const el = document.querySelector('[data-testid="pitch-slider"]');
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-  setter.call(el, '55');
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-});
-await page.waitForTimeout(2500);
+// Tilt moved to the Camera panel when the editor was restructured; the
+// shared helper opens whichever panel now owns it.
+await setRange(page, 'pitch-slider', 55);
+await page.waitForTimeout(2000);
 const pitch = await cameraPitch();
 pitch > 45
   ? pass(`tilt reaches the camera (${Math.round(pitch)}°)`)
   : fail('tilt reaches the camera', pitch);
 
-await page.locator('[data-testid="terrain-toggle"]').check();
+await (await reveal(page, 'terrain-toggle')).check();
 await page.waitForTimeout(2500);
 (await hasTerrain())
   ? pass('terrain toggle attaches a DEM')
   : fail('terrain toggle attaches a DEM');
-await page.locator('[data-testid="terrain-toggle"]').uncheck();
+await (await reveal(page, 'terrain-toggle')).uncheck();
 await page.waitForTimeout(1500);
 !(await hasTerrain())
   ? pass('terrain can be turned back off')
   : fail('terrain can be turned back off');
 
-await page.locator('[data-testid="projection-globe"]').click();
+await click(page, 'projection-globe');
 await page.waitForTimeout(2500);
 const proj = await projectionName();
 proj === 'globe'
@@ -168,6 +165,7 @@ await page.waitForTimeout(5000);
 
 // A style switch must not silently reset appearance.
 console.log('\n[appearance] survives a style switch');
+await openPanel(page, 'style');
 await page.selectOption('select', 'minimal');
 await page.waitForTimeout(4000);
 (await cameraPitch()) > 45

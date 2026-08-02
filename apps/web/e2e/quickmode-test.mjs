@@ -5,6 +5,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 import { rawStats } from './imgstats.mjs';
 
 const PORT = 3130;
@@ -77,7 +78,7 @@ const initial = await stopCount();
 initial === 3 ? pass('default trip has 3 stops') : fail('default trip has 3 stops', initial);
 
 // Search + pick a result.
-await page.locator('[data-testid="place-search"]').fill('reykjav');
+await (await reveal(page, 'place-search')).fill('reykjav');
 await page.waitForSelector('[data-testid="place-results"] li', { timeout: 10_000 });
 const firstResult = await page.locator('[data-testid="place-results"] li button').first().innerText();
 firstResult.toLowerCase().includes('reykjav')
@@ -91,7 +92,7 @@ await page.waitForTimeout(1200);
   : fail('picking a result appends a stop', await stopCount());
 
 // Keyboard flow: type, ArrowDown, Enter.
-await page.locator('[data-testid="place-search"]').fill('osaka');
+await (await reveal(page, 'place-search')).fill('osaka');
 await page.waitForSelector('[data-testid="place-results"] li', { timeout: 10_000 });
 await page.keyboard.press('Enter');
 await page.waitForTimeout(1000);
@@ -123,7 +124,7 @@ reloaded === preRemove - 1
   : fail('reloading the URL restores the same stops', `${reloaded} vs ${preRemove - 1}`);
 
 // Vertical format resizes the canvas.
-await page.getByRole('button', { name: '9:16' }).click();
+await click(page, 'format-9x16');
 await page.waitForTimeout(2500);
 const canvas = await page.evaluate(() => {
   const c = document.querySelector('.maplibregl-canvas');
@@ -136,7 +137,7 @@ canvas.w === 720 && canvas.h === 1280
 await page.screenshot({ path: '/tmp/quickmode.png' });
 
 // Back to 16:9.
-await page.getByRole('button', { name: '16:9' }).click();
+await click(page, 'format-16x9');
 await page.waitForTimeout(2500);
 
 // Speed control: raising it must shorten the animation. (Also keeps the
@@ -147,7 +148,7 @@ const durationOf = async () => {
   return Number(t.split('/')[1].trim().replace('s', ''));
 };
 const slowDur = await durationOf();
-await page.locator('[data-testid="speed-slider"]').fill('2.5');
+await (await reveal(page, 'speed-slider')).fill('2.5');
 await page.waitForTimeout(2500);
 const fastDur = await durationOf();
 fastDur < slowDur * 0.6

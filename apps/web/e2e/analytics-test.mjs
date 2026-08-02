@@ -11,6 +11,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 import { startMockTileServer } from './mock-tileserver.mjs';
 import { startMockPosthog } from './mock-posthog.mjs';
 
@@ -115,14 +116,14 @@ opened?.properties?.from_link === true && opened?.properties?.stops === 2
   : fail('editor_opened carries the arrival context', JSON.stringify(opened?.properties));
 
 // Type a title — user content that must never be transmitted.
-await page.locator('[data-testid="title-input"]').fill(SECRET_TITLE);
+await (await reveal(page, 'title-input')).fill(SECRET_TITLE);
 await page.waitForTimeout(400);
 
 // Apply a template: our own id, so this one IS expected on the wire.
-await page.locator('[data-testid="template-road-trip"]').click().catch(() => {});
+await click(page, 'template-road-trip').catch(() => {});
 await page.waitForTimeout(1500);
 
-await page.locator('[data-testid="zoom-city"]').click();
+await click(page, 'zoom-city');
 await page.waitForTimeout(800);
 
 await page.evaluate(() => {
@@ -141,7 +142,7 @@ names.includes('camera_changed')
   : fail('camera_changed fires', JSON.stringify(names));
 
 // Once-per-session events must not repeat, or the funnel counts are wrong.
-await page.locator('[data-testid="zoom-region"]').click();
+await click(page, 'zoom-region');
 await page.waitForTimeout(1200);
 ph.find('camera_changed').length === 1
   ? pass('once-per-session events fire exactly once')

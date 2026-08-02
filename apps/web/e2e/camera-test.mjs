@@ -9,6 +9,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal, setRange } from './ui.mjs';
 import { startMockTileServer } from './mock-tileserver.mjs';
 
 const APP_PORT = 3270;
@@ -77,19 +78,6 @@ const seekTo = async (frac) => {
   await page.waitForTimeout(900);
 };
 
-const setRange = async (testid, value) => {
-  await page.evaluate(
-    ({ id, v }) => {
-      const el = document.querySelector(`[data-testid="${id}"]`);
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      setter.call(el, String(v));
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    },
-    { id: testid, v: value },
-  );
-  await page.waitForTimeout(900);
-};
 
 // Paris -> Lyon: short enough that fixed framing looks wrong and auto framing
 // visibly fixes it. That contrast is the whole point of the feature.
@@ -101,7 +89,7 @@ await page.goto(
 await page.waitForTimeout(5000);
 
 console.log('\n[camera] panel + framing presets');
-(await page.locator('[data-testid="camera-panel"]').count()) === 1
+(await (await reveal(page, 'camera-panel')).count()) === 1
   ? pass('camera panel renders')
   : fail('camera panel renders');
 
@@ -110,28 +98,28 @@ autoZoom > 6.5
   ? pass(`auto framing zooms in on a short trip (z=${autoZoom.toFixed(2)})`)
   : fail('auto framing zooms in on a short trip', autoZoom);
 
-await page.locator('[data-testid="zoom-continent"]').click();
+await click(page, 'zoom-continent');
 await page.waitForTimeout(1200);
 const contZoom = await zoom();
 Math.abs(contZoom - 3.2) < 0.05
   ? pass(`a preset pins the camera to its zoom (z=${contZoom.toFixed(2)})`)
   : fail('a preset pins the camera to its zoom', contZoom);
 
-await page.locator('[data-testid="zoom-street"]').click();
+await click(page, 'zoom-street');
 await page.waitForTimeout(1200);
 const streetZoom = await zoom();
 streetZoom > contZoom + 5
   ? pass(`switching presets moves the camera (${contZoom.toFixed(1)} → ${streetZoom.toFixed(1)})`)
   : fail('switching presets moves the camera', `${contZoom} → ${streetZoom}`);
 
-await page.locator('[data-testid="zoom-auto"]').click();
+await click(page, 'zoom-auto');
 await page.waitForTimeout(1200);
 Math.abs((await zoom()) - autoZoom) < 0.05
   ? pass('returning to Auto restores the derived framing')
   : fail('returning to Auto restores the derived framing', await zoom());
 
 console.log('\n[camera] per-stop zoom override');
-await setRange('stop-zoom-0', 12);
+await setRange(page, 'stop-zoom-0', 12);
 const overridden = await zoom();
 Math.abs(overridden - 12) < 0.15
   ? pass(`a per-stop override beats the preset (z=${overridden.toFixed(2)})`)
@@ -145,7 +133,7 @@ Math.abs(lastStopZoom - 12) > 1
   : fail('the override is confined to its own stop', lastStopZoom);
 
 await seekTo(0);
-await page.locator('[data-testid="stop-zoom-reset-0"]').click();
+await click(page, 'stop-zoom-reset-0');
 await page.waitForTimeout(1000);
 Math.abs((await zoom()) - autoZoom) < 0.05
   ? pass('"auto" clears a single stop override')
@@ -159,29 +147,29 @@ const midLegZoom = () =>
     return m ? m.getZoom() : -1;
   });
 
-await setRange('arc-slider', 0.9);
+await setRange(page, 'arc-slider', 0.9);
 await seekTo(0.5);
 const flatMid = await midLegZoom();
 await seekTo(0);
-await setRange('arc-slider', 3);
+await setRange(page, 'arc-slider', 3);
 await seekTo(0.5);
 const tallMid = await midLegZoom();
 tallMid < flatMid - 0.3
   ? pass(`a taller arc pulls further out mid-flight (${flatMid.toFixed(2)} → ${tallMid.toFixed(2)})`)
   : fail('a taller arc pulls further out mid-flight', `${flatMid} vs ${tallMid}`);
 
-await setRange('arc-slider', 1.42);
+await setRange(page, 'arc-slider', 1.42);
 await seekTo(0);
 
 console.log('\n[camera] rotation');
-await setRange('bearing-slider', 90);
+await setRange(page, 'bearing-slider', 90);
 const b = await bearing();
 Math.abs(((b % 360) + 360) % 360 - 90) < 1
   ? pass(`heading reaches the camera (${Math.round(b)}°)`)
   : fail('heading reaches the camera', b);
 
-await setRange('bearing-slider', 0);
-await page.locator('[data-testid="bearing-mode-travel"]').click();
+await setRange(page, 'bearing-slider', 0);
+await click(page, 'bearing-mode-travel');
 await page.waitForTimeout(1200);
 const travelB = await bearing();
 // Paris -> Lyon runs roughly south-east, so "follow route" must NOT be north.
@@ -189,14 +177,14 @@ Math.abs(((travelB % 360) + 360) % 360) > 20
   ? pass(`follow-route orients along the leg (${Math.round(travelB)}°)`)
   : fail('follow-route orients along the leg', travelB);
 
-await page.locator('[data-testid="bearing-mode-fixed"]').click();
+await click(page, 'bearing-mode-fixed');
 await page.waitForTimeout(1200);
 Math.abs(await bearing()) < 1
   ? pass('switching back to Fixed restores north')
   : fail('switching back to Fixed restores north', await bearing());
 
 console.log('\n[camera] orbit');
-await setRange('orbit-slider', 180);
+await setRange(page, 'orbit-slider', 180);
 await seekTo(0);
 const orbitStart = await bearing();
 // The first dwell runs from t=0 to the departure keyframe; sample inside it.
@@ -205,20 +193,20 @@ const orbitMid = await bearing();
 Math.abs(orbitMid - orbitStart) > 3
   ? pass(`orbit rotates the map during a dwell (${Math.round(orbitStart)}° → ${Math.round(orbitMid)}°)`)
   : fail('orbit rotates the map during a dwell', `${orbitStart} → ${orbitMid}`);
-await setRange('orbit-slider', 0);
+await setRange(page, 'orbit-slider', 0);
 
 console.log('\n[camera] tilt');
-await setRange('pitch-slider', 55);
+await setRange(page, 'pitch-slider', 55);
 const p = await pitch();
 p > 45
   ? pass(`tilt reaches the camera (${Math.round(p)}°)`)
   : fail('tilt reaches the camera', p);
 
 console.log('\n[camera] persistence');
-await page.locator('[data-testid="zoom-city"]').click();
-await page.locator('[data-testid="bearing-mode-travel"]').click();
-await setRange('orbit-slider', 45);
-await setRange('arc-slider', 2.4);
+await click(page, 'zoom-city');
+await click(page, 'bearing-mode-travel');
+await setRange(page, 'orbit-slider', 45);
+await setRange(page, 'arc-slider', 2.4);
 await page.waitForTimeout(800);
 
 const url = page.url();
@@ -234,13 +222,13 @@ Math.abs(rz - 10.5) < 0.1 && rp > 45
   ? pass(`reloading the link restores framing and tilt (z=${rz.toFixed(1)}, ${Math.round(rp)}°)`)
   : fail('reloading the link restores framing and tilt', `${rz} / ${rp}`);
 
-(await page.locator('[data-testid="zoom-city"]').getAttribute('data-on')) === '1' &&
-(await page.locator('[data-testid="bearing-mode-travel"]').getAttribute('data-on')) === '1'
+(await (await reveal(page, 'zoom-city')).getAttribute('data-on')) === '1' &&
+(await (await reveal(page, 'bearing-mode-travel')).getAttribute('data-on')) === '1'
   ? pass('the panel reflects the restored state')
   : fail('the panel reflects the restored state');
 
 console.log('\n[camera] reset');
-await page.locator('[data-testid="camera-reset"]').click();
+await click(page, 'camera-reset');
 await page.waitForTimeout(1500);
 const resetZoom = await zoom();
 Math.abs(resetZoom - autoZoom) < 0.05 && (await pitch()) < 1 && Math.abs(await bearing()) < 1

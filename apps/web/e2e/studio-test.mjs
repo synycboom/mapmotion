@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 
 const PORT = 3190;
 const exe = [
@@ -71,14 +72,14 @@ console.log('\n[studio] mode switch');
 await page.goto(`http://localhost:${PORT}/?style=minimal`, { waitUntil: 'load' });
 await page.waitForTimeout(3500);
 
-(await page.locator('[data-testid="timeline"]').count()) === 0
+(await (await reveal(page, 'timeline')).count()) === 0
   ? pass('timeline hidden in Quick mode')
   : fail('timeline hidden in Quick mode');
 
 const beforeSwitch = await totalDuration();
-await page.locator('[data-testid="mode-studio"]').click();
+await click(page, 'mode-studio');
 await page.waitForTimeout(1500);
-(await page.locator('[data-testid="timeline"]').count()) === 1
+(await (await reveal(page, 'timeline')).count()) === 1
   ? pass('timeline appears in Studio mode')
   : fail('timeline appears in Studio mode');
 const afterSwitch = await totalDuration();
@@ -87,21 +88,21 @@ afterSwitch === beforeSwitch
   : fail('switching modes does not change the project', `${beforeSwitch} -> ${afterSwitch}`);
 
 // Default trip is 3 stops -> 2 legs, 3 dwell blocks.
-(await page.locator('[data-testid="tl-leg-0"]').count()) === 1 &&
-(await page.locator('[data-testid="tl-leg-1"]').count()) === 1
+(await (await reveal(page, 'tl-leg-0')).count()) === 1 &&
+(await (await reveal(page, 'tl-leg-1')).count()) === 1
   ? pass('legs are drawn on the timeline')
   : fail('legs are drawn on the timeline');
-(await page.locator('[data-testid="tl-stop-0"]').count()) === 1
+(await (await reveal(page, 'tl-stop-0')).count()) === 1
   ? pass('stop dwells are drawn on the timeline')
   : fail('stop dwells are drawn on the timeline');
 
 console.log('\n[studio] retiming');
-await page.locator('[data-testid="tl-leg-0"]').click();
+await click(page, 'tl-leg-0');
 await page.waitForTimeout(600);
-(await page.locator('[data-testid="segment-editor"]').count()) === 1
+(await (await reveal(page, 'segment-editor')).count()) === 1
   ? pass('clicking a leg opens the segment editor')
   : fail('clicking a leg opens the segment editor');
-(await page.locator('[data-testid="tl-leg-0"]').getAttribute('data-active')) === '1'
+(await (await reveal(page, 'tl-leg-0')).getAttribute('data-active')) === '1'
   ? pass('selected block is highlighted')
   : fail('selected block is highlighted');
 
@@ -112,16 +113,16 @@ durAfter > durBefore
   ? pass(`retiming a leg changes the real duration (${durBefore}s -> ${durAfter}s)`)
   : fail('retiming a leg changes the real duration', `${durBefore} -> ${durAfter}`);
 
-const label = await page.locator('[data-testid="segment-duration-label"]').innerText();
+const label = await (await reveal(page, 'segment-duration-label')).innerText();
 label.startsWith('9.0')
   ? pass('segment label reflects the new duration')
   : fail('segment label reflects the new duration', label);
 
 // A retimed segment is marked as overridden and can be reverted.
-(await page.locator('[data-testid="clear-override"]').count()) === 1
+(await (await reveal(page, 'clear-override')).count()) === 1
   ? pass('overridden segment offers an "auto" reset')
   : fail('overridden segment offers an "auto" reset');
-await page.locator('[data-testid="clear-override"]').click();
+await click(page, 'clear-override');
 await page.waitForTimeout(1200);
 const durReverted = await totalDuration();
 Math.abs(durReverted - durBefore) < 0.15
@@ -129,7 +130,7 @@ Math.abs(durReverted - durBefore) < 0.15
   : fail('reverting restores the derived duration', `${durReverted} vs ${durBefore}`);
 
 console.log('\n[studio] stop dwell + reset');
-await page.locator('[data-testid="tl-stop-1"]').click();
+await click(page, 'tl-stop-1');
 await page.waitForTimeout(600);
 const dwellBefore = await totalDuration();
 await setRange('segment-duration', 6000);
@@ -137,7 +138,7 @@ await setRange('segment-duration', 6000);
   ? pass('retiming a stop dwell changes the duration')
   : fail('retiming a stop dwell changes the duration');
 
-await page.locator('[data-testid="reset-timing"]').click();
+await click(page, 'reset-timing');
 await page.waitForTimeout(1200);
 Math.abs((await totalDuration()) - beforeSwitch) < 0.15
   ? pass('reset timing restores every derived duration')
@@ -148,22 +149,22 @@ console.log('\n[studio] playhead');
 // reaches the track itself rather than selecting a segment.
 await page.locator('[data-testid="timeline-track"]').click({ position: { x: 300, y: 60 } });
 await page.waitForTimeout(800);
-const head = await page.locator('[data-testid="playhead"]').getAttribute('style');
+const head = await (await reveal(page, 'playhead')).getAttribute('style');
 const leftPct = Number(head.match(/left:\s*([\d.]+)%/)?.[1] ?? 0);
 leftPct > 5 && leftPct < 95
   ? pass(`clicking the track scrubs the playhead (${leftPct.toFixed(0)}%)`)
   : fail('clicking the track scrubs the playhead', leftPct);
 
 console.log('\n[studio] survives edits');
-await page.locator('[data-testid="mode-quick"]').click();
+await click(page, 'mode-quick');
 await page.waitForTimeout(600);
-await page.locator('[data-testid="place-search"]').fill('osaka');
+await (await reveal(page, 'place-search')).fill('osaka');
 await page.waitForSelector('[data-testid="place-results"] li', { timeout: 10_000 });
 await page.keyboard.press('Enter');
 await page.waitForTimeout(1800);
-await page.locator('[data-testid="mode-studio"]').click();
+await click(page, 'mode-studio');
 await page.waitForTimeout(1500);
-(await page.locator('[data-testid="tl-leg-2"]').count()) === 1
+(await (await reveal(page, 'tl-leg-2')).count()) === 1
   ? pass('adding a stop adds a leg to the timeline')
   : fail('adding a stop adds a leg to the timeline');
 

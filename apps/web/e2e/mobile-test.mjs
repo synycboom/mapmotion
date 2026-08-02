@@ -14,6 +14,7 @@ import { chromium, devices } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 import { startMockTileServer } from './mock-tileserver.mjs';
 import { pngStats } from './imgstats.mjs';
 

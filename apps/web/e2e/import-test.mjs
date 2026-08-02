@@ -4,6 +4,7 @@ import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 
 const PORT = 3150;
 const exe = [
@@ -90,15 +91,15 @@ console.log('\n[import] GPX track');
 await page.goto(`http://localhost:${PORT}/?style=minimal`, { waitUntil: 'load' });
 await page.waitForTimeout(3500);
 
-await page.locator('[data-testid="track-file-input"]').setInputFiles('/tmp/mm-fixtures/ride.gpx');
+await (await reveal(page, 'track-file-input')).setInputFiles('/tmp/mm-fixtures/ride.gpx');
 await page.waitForTimeout(2500);
 
 (await stopCount()) === 2 ? pass('GPX track collapses to start + finish stops') : fail('GPX track collapses to start + finish stops', await stopCount());
 
-const mode = await page.locator('[data-testid="leg-0"]').getAttribute('data-mode');
+const mode = await (await reveal(page, 'leg-0')).getAttribute('data-mode');
 mode === 'file' ? pass('imported leg uses track mode') : fail('imported leg uses track mode', mode);
 
-const status = await page.locator('[data-testid="leg-0"]').getAttribute('data-status');
+const status = await (await reveal(page, 'leg-0')).getAttribute('data-status');
 status === 'ok' ? pass('imported leg has geometry') : fail('imported leg has geometry', status);
 
 // Seek to the end so the whole path is drawn.
@@ -117,16 +118,16 @@ n > 2 && n !== 97
 await page.screenshot({ path: '/tmp/import-gpx.png' });
 
 console.log('\n[import] KML waypoints');
-await page.locator('[data-testid="track-file-input"]').setInputFiles('/tmp/mm-fixtures/paris.kml');
+await (await reveal(page, 'track-file-input')).setInputFiles('/tmp/mm-fixtures/paris.kml');
 await page.waitForTimeout(2500);
 (await stopCount()) === 3 ? pass('waypoint-only KML becomes 3 stops') : fail('waypoint-only KML becomes 3 stops', await stopCount());
 const names = await page.locator('[data-testid="stop-list"] li').allInnerTexts();
 names.join(' ').includes('Louvre') ? pass('waypoint names are kept') : fail('waypoint names are kept', names.join('|'));
-const kmlMode = await page.locator('[data-testid="leg-0"]').getAttribute('data-mode');
+const kmlMode = await (await reveal(page, 'leg-0')).getAttribute('data-mode');
 kmlMode === 'air' ? pass('waypoint legs default to flight') : fail('waypoint legs default to flight', kmlMode);
 
 console.log('\n[import] bad file');
-await page.locator('[data-testid="track-file-input"]').setInputFiles('/tmp/mm-fixtures/notes.txt');
+await (await reveal(page, 'track-file-input')).setInputFiles('/tmp/mm-fixtures/notes.txt');
 await page.waitForTimeout(1500);
 const err = await page.locator('[data-testid="import-error"]').count();
 err > 0 ? pass('non-track file shows an error') : fail('non-track file shows an error');

@@ -9,6 +9,7 @@ import { chromium } from 'playwright-core';
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { click, exists, reveal } from './ui.mjs';
 import { startMockTileServer } from './mock-tileserver.mjs';
 import { countPixels, rawPixels } from './imgstats.mjs';
 
@@ -186,11 +187,11 @@ await page.goto(`http://localhost:${APP_PORT}/?styleUrl=${encodeURIComponent(sty
 await page.waitForTimeout(5000);
 
 console.log('\n[photos] the drop');
-(await page.locator('[data-testid="photo-import"]').count()) === 1
+(await (await reveal(page, 'photo-import')).count()) === 1
   ? pass('photo import renders')
   : fail('photo import renders');
 
-await page.locator('[data-testid="photo-input"]').setInputFiles([
+await (await reveal(page, 'photo-input')).setInputFiles([
   ...PHOTOS.map((p) => `${DIR}/${p.file}`),
   `${DIR}/nogps.jpg`,
   `${DIR}/broken.jpg`,
@@ -234,7 +235,7 @@ labels.includes('Bangkok') && labels.includes('Tokyo') && labels.includes('Paris
   ? pass(`stops are named from the city index (${labels.join(', ')})`)
   : fail('stops are named from the city index', JSON.stringify(labels));
 
-const note = await page.locator('[data-testid="photo-note"]').innerText().catch(() => '');
+const note = await (await reveal(page, 'photo-note')).innerText().catch(() => '');
 /skipped/i.test(note) && /2/.test(note)
   ? pass(`skipped photos are reported, not silently dropped ("${note.trim()}")`)
   : fail('skipped photos are reported, not silently dropped', note);
@@ -302,9 +303,9 @@ reds > 20
 
 console.log('\n[photos] failure paths');
 // A folder with nothing usable must explain why, not fail silently.
-await page.locator('[data-testid="photo-input"]').setInputFiles([`${DIR}/nogps.jpg`]);
+await (await reveal(page, 'photo-input')).setInputFiles([`${DIR}/nogps.jpg`]);
 await page.waitForTimeout(3000);
-const err = await page.locator('[data-testid="photo-error"]').innerText().catch(() => '');
+const err = await (await reveal(page, 'photo-error')).innerText().catch(() => '');
 /location data/i.test(err)
   ? pass('a folder with no GPS explains why, and how to fix it')
   : fail('a folder with no GPS explains why', err);
@@ -322,15 +323,15 @@ const heic = Buffer.concat([
   Buffer.alloc(64),
 ]);
 writeFileSync(`${DIR}/photo.heic`, heic);
-await page.locator('[data-testid="photo-input"]').setInputFiles([`${DIR}/photo.heic`]);
+await (await reveal(page, 'photo-input')).setInputFiles([`${DIR}/photo.heic`]);
 await page.waitForTimeout(2500);
-const heicErr = await page.locator('[data-testid="photo-error"]').innerText().catch(() => '');
+const heicErr = await (await reveal(page, 'photo-error')).innerText().catch(() => '');
 /HEIC/i.test(heicErr) && /Most Compatible|JPEG/i.test(heicErr)
   ? pass('HEIC is named as the problem, with the iPhone setting to change')
   : fail('HEIC is named as the problem', heicErr);
 
 console.log('\n[photos] a second import replaces the pictures');
-await page.locator('[data-testid="photo-input"]').setInputFiles([
+await (await reveal(page, 'photo-input')).setInputFiles([
   `${DIR}/p3.jpg`, `${DIR}/p4.jpg`, `${DIR}/p1.jpg`,
 ]);
 await page.waitForTimeout(6000);

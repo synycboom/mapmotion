@@ -57,6 +57,8 @@ import {
 import { saveProject, type SavedProject } from '../lib/projectLibrary';
 import { Timeline } from '../components/Timeline';
 import { useNarrow, usePreviewFit } from '../lib/responsive';
+import { EditorShell } from '../components/EditorShell';
+import { Storyboard } from '../components/Storyboard';
 import { initAnalytics, track, trackOnce } from '../lib/analytics';
 
 declare global {
@@ -137,12 +139,14 @@ export default function Editor() {
   const [mapErrors, setMapErrors] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [contextLost, setContextLost] = useState(false);
+  /** Which panel the rail has open; null means the map has the whole screen. */
+  const [activePanel, setActivePanel] = useState<string | null>('trip');
   /** Lets the map's style.load handler reach the latest appearance. */
   const applyAppearanceRef = useRef<(() => void) | null>(null);
 
   // ---- responsive layout ----
   const narrow = useNarrow();
-  const previewRef = useRef<HTMLElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const fitDims = scaledDims(format, res);
   // Stacked, the preview gets half the screen and the controls scroll under
   // it. Side by side, it gets the window minus the transport row.
@@ -1019,149 +1023,223 @@ export default function Editor() {
   const dims = scaledDims(format, res);
   const dur = project?.format.durationMs ?? 1;
 
-  return (
-    <main
-      style={{
-        padding: narrow ? 12 : 20,
-        display: 'flex',
-        flexDirection: narrow ? 'column' : 'row',
-        gap: narrow ? 14 : 20,
-        alignItems: 'flex-start',
-      }}
-    >
-      {/* ---------------- Quick mode panel ---------------- */}
-      {/* Stacked, the preview goes first — it's the thing you came to see. */}
-      <aside
-        data-testid="controls"
-        style={{
-          width: narrow ? '100%' : 340,
-          flexShrink: 0,
-          order: narrow ? 2 : 0,
-          minWidth: 0,
+  const segments = project ? tripSegments(project) : { dwells: [], legs: [] };
+
+  const header = (
+    <>
+      <h1 style={{ margin: 0, fontSize: 16, letterSpacing: -0.2 }}>Mapmotion</h1>
+      <div style={{ display: 'flex', gap: 4 }}>
+        {(['quick', 'studio'] as const).map((m) => (
+          <button
+            key={m}
+            data-testid={`mode-${m}`}
+            onClick={() => setMode(m)}
+            style={{
+              ...btn,
+              padding: '4px 10px',
+              fontSize: 11,
+              textTransform: 'capitalize',
+              background: mode === m ? '#e8590c' : '#1c2a42',
+              borderColor: mode === m ? '#e8590c' : '#34496b',
+            }}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+      <button
+        data-testid="copy-link"
+        onClick={() => {
+          void navigator.clipboard?.writeText(location.href);
+          track('link_copied', { stops: stops.length, style: styleId });
+          setCopied(true);
         }}
+        style={{ ...btn, marginLeft: 'auto', padding: '5px 11px', fontSize: 12 }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-          <h1 style={{ margin: 0, fontSize: 18 }}>Mapmotion</h1>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-            {(['quick', 'studio'] as const).map((m) => (
-              <button
-                key={m}
-                data-testid={`mode-${m}`}
-                onClick={() => setMode(m)}
-                style={{
-                  ...btn,
-                  padding: '4px 10px',
-                  fontSize: 11,
-                  textTransform: 'capitalize',
-                  background: mode === m ? '#e8590c' : '#1c2a42',
-                  borderColor: mode === m ? '#e8590c' : '#34496b',
-                }}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-        </div>
+        {copied ? 'Link copied ✓' : 'Share link'}
+      </button>
+    </>
+  );
 
-        <div style={{ marginBottom: 12 }}>
-          <Label>Start from a template</Label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-            {TEMPLATES.map((tpl) => (
-              <button
-                key={tpl.id}
-                data-testid={`template-${tpl.id}`}
-                onClick={() => applyTemplate(tpl.id)}
-                title={tpl.blurb}
-                disabled={exporting}
-                style={{
-                  ...btn,
-                  padding: '5px 10px',
-                  fontSize: 11,
-                  borderRadius: 999,
-                }}
-              >
-                {tpl.label}
-              </button>
-            ))}
+  const panels = [
+    {
+      id: 'trip',
+      label: 'Trip',
+      glyph: '🗺',
+      hint: 'Stops, routes and imports',
+      badge: stops.length || null,
+      content: (
+        <>
+          <div style={{ marginBottom: 12 }}>
+            <Label>Start from a template</Label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+              {TEMPLATES.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  data-testid={`template-${tpl.id}`}
+                  onClick={() => applyTemplate(tpl.id)}
+                  title={tpl.blurb}
+                  disabled={exporting}
+                  style={{ ...btn, padding: '5px 10px', fontSize: 11, borderRadius: 999 }}
+                >
+                  {tpl.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-
-        <PlaceSearch onPick={addStop} />
-        <PhotoImport onImport={importPhotoTrip} disabled={exporting} />
-        <TrackImport onImport={importGpx} />
-        <StopList
-          stops={stops}
-          legModes={legModes}
-          legStatuses={legStatuses}
-          legMetrics={legMetrics}
-          stopZooms={camera.stopZooms}
-          autoZooms={autoZooms}
-          onRemove={removeStop}
-          onMove={moveStop}
-          onSetLegMode={setLegMode}
-          onSetStopZoom={setStopZoom}
-        />
-
-        <div style={{ marginTop: 18 }}>
-          <Label>Marker style</Label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {PIN_STYLES.map((ps) => (
-              <button
-                key={ps.id}
-                data-testid={`pin-${ps.id}`}
-                onClick={() => setPin({ ...pin, style: ps.id })}
-                title={ps.hint}
-                disabled={exporting}
-                style={{
-                  ...btn,
-                  padding: '4px 9px',
-                  fontSize: 11,
-                  borderRadius: 999,
-                  background: pin.style === ps.id ? '#e8590c' : '#1c2a42',
-                  borderColor: pin.style === ps.id ? '#e8590c' : '#34496b',
-                }}
-              >
-                {ps.label}
-              </button>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
-            <input
-              data-testid="pin-color"
-              type="color"
-              value={pin.color}
-              disabled={exporting}
-              onChange={(e) => setPin({ ...pin, color: e.target.value })}
-              style={{ width: 30, height: 26, padding: 0, border: '1px solid #34496b', borderRadius: 4, background: 'transparent' }}
-            />
-            {pin.style === 'emoji' && (
+          <PlaceSearch onPick={addStop} />
+          <PhotoImport onImport={importPhotoTrip} disabled={exporting} />
+          <TrackImport onImport={importGpx} />
+          <StopList
+            stops={stops}
+            legModes={legModes}
+            legStatuses={legStatuses}
+            legMetrics={legMetrics}
+            stopZooms={camera.stopZooms}
+            autoZooms={autoZooms}
+            onRemove={removeStop}
+            onMove={moveStop}
+            onSetLegMode={setLegMode}
+            onSetStopZoom={setStopZoom}
+          />
+        </>
+      ),
+    },
+    {
+      id: 'style',
+      label: 'Style',
+      glyph: '🎨',
+      hint: 'Markers, basemap and labels',
+      content: (
+        <>
+          <div>
+            <Label>Marker style</Label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {PIN_STYLES.map((ps) => (
+                <button
+                  key={ps.id}
+                  data-testid={`pin-${ps.id}`}
+                  onClick={() => setPin({ ...pin, style: ps.id })}
+                  title={ps.hint}
+                  disabled={exporting}
+                  style={{
+                    ...btn,
+                    padding: '4px 9px',
+                    fontSize: 11,
+                    borderRadius: 999,
+                    background: pin.style === ps.id ? '#e8590c' : '#1c2a42',
+                    borderColor: pin.style === ps.id ? '#e8590c' : '#34496b',
+                  }}
+                >
+                  {ps.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
               <input
-                data-testid="pin-emoji-input"
-                value={pin.emoji ?? ''}
-                onChange={(e) => setPin({ ...pin, emoji: e.target.value.slice(0, 4) })}
-                placeholder="📍"
+                data-testid="pin-color"
+                type="color"
+                value={pin.color}
                 disabled={exporting}
-                style={{ ...inputStyle, width: 60, textAlign: 'center' }}
+                onChange={(e) => setPin({ ...pin, color: e.target.value })}
+                style={{ width: 30, height: 26, padding: 0, border: '1px solid #34496b', borderRadius: 4, background: 'transparent' }}
               />
-            )}
-            <input
-              data-testid="pin-size"
-              type="range"
-              min={0.4}
-              max={3}
-              step={0.1}
-              value={pin.size}
-              disabled={exporting}
-              onChange={(e) => setPin({ ...pin, size: Number(e.target.value) })}
-              style={{ flex: 1 }}
-            />
-            <span style={{ fontSize: 10, opacity: 0.55, minWidth: 26 }}>
-              {pin.size.toFixed(1)}×
-            </span>
+              {pin.style === 'emoji' && (
+                <input
+                  data-testid="pin-emoji-input"
+                  value={pin.emoji ?? ''}
+                  onChange={(e) => setPin({ ...pin, emoji: e.target.value.slice(0, 4) })}
+                  placeholder="📍"
+                  disabled={exporting}
+                  style={{ ...inputStyle, width: 60, textAlign: 'center' }}
+                />
+              )}
+              <input
+                data-testid="pin-size"
+                type="range"
+                min={0.4}
+                max={3}
+                step={0.1}
+                value={pin.size}
+                disabled={exporting}
+                onChange={(e) => setPin({ ...pin, size: Number(e.target.value) })}
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: 10, opacity: 0.55, minWidth: 26 }}>{pin.size.toFixed(1)}×</span>
+            </div>
           </div>
-        </div>
 
-        <div style={{ marginTop: 18 }}>
+          <div style={{ marginTop: 16 }}>
+            <Label>Map style</Label>
+            <select
+              value={styleId}
+              onChange={(e) => void switchStyle(e.target.value)}
+              disabled={exporting}
+              style={{ ...btn, width: '100%', padding: '8px 10px' }}
+            >
+              {(extraStyle ? [extraStyle, ...STYLES] : STYLES).map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <AppearancePanel
+            appearance={appearance}
+            onChange={setAppearance}
+            layerCounts={layerCounts}
+            disabled={exporting}
+          />
+        </>
+      ),
+    },
+    {
+      id: 'camera',
+      label: 'Camera',
+      glyph: '🎥',
+      hint: 'Framing, arc, tilt, rotation',
+      content: (
+        <CameraPanel
+          camera={camera}
+          onChange={(next) => {
+            // Once per session, and with the setting names only — sliders
+            // fire continuously and per-tick events would drown the funnel.
+            trackOnce('camera_changed', { preset: next.zoomPreset, mode: next.bearingMode });
+            setCamera(next);
+          }}
+          pitch={appearance.pitch}
+          onPitchChange={(deg) => setAppearance((a) => ({ ...a, pitch: deg }))}
+          disabled={exporting}
+        />
+      ),
+    },
+    {
+      id: 'audio',
+      label: 'Audio',
+      glyph: '♪',
+      hint: 'Soundtrack and beat snapping',
+      badge: audio ? '•' : null,
+      content: (
+        <AudioPanel
+          source={audio}
+          onSource={handleAudioSource}
+          onTrackChange={handleTrackChange}
+          onSnapToBeat={snapToBeat}
+          playheadMs={playheadMs}
+          videoDurationMs={project?.format.durationMs ?? 1}
+          disabled={exporting}
+        />
+      ),
+    },
+    {
+      id: 'titles',
+      label: 'Titles',
+      glyph: 'T',
+      hint: 'Opening and closing cards',
+      badge: title ? '•' : null,
+      content: (
+        <div>
           <Label>Title card</Label>
           <input
             data-testid="title-input"
@@ -1199,341 +1277,314 @@ export default function Editor() {
             Repeat as an end card
           </label>
         </div>
-
-        <div style={{ marginTop: 18 }}>
-          <Label>Format</Label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {(Object.keys(FORMATS) as FormatId[]).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFormat(f)}
-                disabled={exporting}
-                style={{
-                  ...btn,
-                  flex: 1,
-                  padding: '7px 4px',
-                  fontSize: 12,
-                  background: f === format ? '#e8590c' : '#1c2a42',
-                  borderColor: f === format ? '#e8590c' : '#34496b',
-                }}
-              >
-                {f.replace('x', ':')}
-              </button>
-            ))}
+      ),
+    },
+    {
+      id: 'output',
+      label: 'Output',
+      glyph: '⤓',
+      hint: 'Format, speed and saved projects',
+      content: (
+        <>
+          <div>
+            <Label>Format</Label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {(Object.keys(FORMATS) as FormatId[]).map((f) => (
+                <button
+                  key={f}
+                  data-testid={`format-${f}`}
+                  onClick={() => setFormat(f)}
+                  disabled={exporting}
+                  style={{
+                    ...btn,
+                    flex: 1,
+                    padding: '7px 4px',
+                    fontSize: 12,
+                    background: f === format ? '#e8590c' : '#1c2a42',
+                    borderColor: f === format ? '#e8590c' : '#34496b',
+                  }}
+                >
+                  {f.replace('x', ':')}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: 11, opacity: 0.45, margin: '5px 0 0' }}>
+              {FORMATS[format].label} · {dims.width}×{dims.height}
+              {res !== 1 && ` · draft ${Math.round(res * 100)}%`}
+            </p>
           </div>
-          <p style={{ fontSize: 11, opacity: 0.45, margin: '5px 0 0' }}>
-            {FORMATS[format].label} · {dims.width}×{dims.height}
-            {res !== 1 && ` · draft ${Math.round(res * 100)}%`}
-          </p>
-        </div>
 
-        <div style={{ marginTop: 16 }}>
-          <Label>Speed · {speed.toFixed(1)}×</Label>
-          <input
-            data-testid="speed-slider"
-            type="range"
-            min={0.5}
-            max={2.5}
-            step={0.1}
-            value={speed}
-            disabled={exporting}
-            onChange={(e) => setSpeed(Number(e.target.value))}
-            style={{ width: '100%' }}
+          <div style={{ marginTop: 16 }}>
+            <Label>Speed · {speed.toFixed(1)}×</Label>
+            <input
+              data-testid="speed-slider"
+              type="range"
+              min={0.5}
+              max={2.5}
+              step={0.1}
+              value={speed}
+              disabled={exporting}
+              onChange={(e) => setSpeed(Number(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <ProjectLibrary
+            onLoad={handleLoad}
+            onSave={handleSave}
+            currentName={title || savedAs || ''}
+            reloadKey={libraryKey}
           />
-        </div>
+        </>
+      ),
+    },
+  ];
 
-        <div style={{ marginTop: 16 }}>
-          <Label>Map style</Label>
-          <select
-            value={styleId}
-            onChange={(e) => void switchStyle(e.target.value)}
-            disabled={exporting}
-            style={{ ...btn, width: '100%', padding: '8px 10px' }}
-          >
-            {(extraStyle ? [extraStyle, ...STYLES] : STYLES).map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <AudioPanel
-          source={audio}
-          onSource={handleAudioSource}
-          onTrackChange={handleTrackChange}
-          onSnapToBeat={snapToBeat}
-          playheadMs={playheadMs}
-          videoDurationMs={project?.format.durationMs ?? 1}
-          disabled={exporting}
-        />
-
-        <CameraPanel
-          camera={camera}
-          onChange={(next) => {
-            // Once per session, and with the setting names only — sliders
-            // fire continuously and per-tick events would drown the funnel.
-            trackOnce('camera_changed', { preset: next.zoomPreset, mode: next.bearingMode });
-            setCamera(next);
-          }}
-          pitch={appearance.pitch}
-          onPitchChange={(deg) => setAppearance((a) => ({ ...a, pitch: deg }))}
-          disabled={exporting}
-        />
-
-        <AppearancePanel
-          appearance={appearance}
-          onChange={setAppearance}
-          layerCounts={layerCounts}
-          disabled={exporting}
-        />
-
-        <ProjectLibrary
-          onLoad={handleLoad}
-          onSave={handleSave}
-          currentName={title || savedAs || ''}
-          reloadKey={libraryKey}
-        />
-
-        <button
-          onClick={() => {
-            void navigator.clipboard?.writeText(location.href);
-            track('link_copied', { stops: stops.length, style: styleId });
-            setCopied(true);
-          }}
-          style={{ ...btn, width: '100%', marginTop: 16, fontSize: 13 }}
-        >
-          {copied ? 'Link copied ✓' : 'Copy shareable link'}
-        </button>
-      </aside>
-
-      {/* ---------------- Preview + transport ---------------- */}
-      <section
-        ref={previewRef}
-        data-testid="preview-pane"
+  const stage = (
+    <div ref={previewRef} style={{ minWidth: 0 }}>
+      <div
+        data-testid="preview-frame"
         style={{
-          flex: 1,
-          minWidth: 0,
-          width: narrow ? '100%' : undefined,
-          order: narrow ? 1 : 0,
+          position: 'relative',
+          width: dims.width * scale,
+          height: dims.height * scale,
+          maxWidth: '100%',
+          // A vertical format leaves slack on both sides; hugging the left
+          // edge looks like a bug rather than a choice.
+          marginInline: narrow ? 'auto' : undefined,
+          overflow: 'hidden',
+          borderRadius: 8,
+          border: '1px solid #223',
         }}
       >
         <div
-          data-testid="preview-frame"
+          ref={containerRef}
           style={{
-            position: 'relative',
+            width: dims.width,
+            height: dims.height,
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left',
+            // The map is non-interactive, so touches belong to the page.
+            touchAction: 'pan-y',
+          }}
+        />
+        <canvas
+          ref={overlayRef}
+          data-testid="title-overlay"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
             width: dims.width * scale,
             height: dims.height * scale,
-            maxWidth: '100%',
-            // A vertical format on a phone leaves slack on both sides; hugging
-            // the left edge looks like a bug rather than a choice.
-            marginInline: narrow ? 'auto' : undefined,
-            overflow: 'hidden',
-            borderRadius: 8,
-            border: '1px solid #223',
+            pointerEvents: 'none',
           }}
-        >
-          <div
-            ref={containerRef}
-            style={{
-              width: dims.width,
-              height: dims.height,
-              transform: `scale(${scale})`,
-              transformOrigin: 'top left',
-              // The map is non-interactive, so touches belong to the page.
-              touchAction: 'pan-y',
-            }}
-          />
-          <canvas
-            ref={overlayRef}
-            data-testid="title-overlay"
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: dims.width * scale,
-              height: dims.height * scale,
-              pointerEvents: 'none',
-            }}
-          />
-          <div
-            style={{
-              position: 'absolute',
-              left: 6,
-              bottom: 4,
-              fontSize: 10,
-              color: '#fff',
-              textShadow: '0 0 3px rgba(0,0,0,0.9)',
-              pointerEvents: 'none',
-            }}
-          >
-            {styleRef.current.attribution}
-          </div>
-          {(styleLoading || !project) && (
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                display: 'grid',
-                placeItems: 'center',
-                background: 'rgba(9,15,26,0.6)',
-                fontSize: 14,
-                textAlign: 'center',
-                padding: 20,
-              }}
-            >
-              {!project ? 'Add at least two stops to build an animation.' : 'Loading style…'}
-            </div>
-          )}
-          {contextLost && (
-            <div
-              data-testid="context-lost"
-              style={{
-                position: 'absolute',
-                inset: 0,
-                display: 'grid',
-                placeItems: 'center',
-                background: 'rgba(9,15,26,0.85)',
-                fontSize: 13,
-                textAlign: 'center',
-                padding: 20,
-              }}
-            >
-              The browser dropped the map&apos;s graphics context — usually low
-              memory. It should come back on its own; reload if it doesn&apos;t.
-            </div>
-          )}
-        </div>
-
+        />
         <div
           style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: narrow ? 8 : 12,
-            alignItems: 'center',
-            marginTop: 14,
-            width: narrow ? '100%' : dims.width * scale,
-            maxWidth: '100%',
+            position: 'absolute',
+            left: 6,
+            bottom: 4,
+            fontSize: 10,
+            color: '#fff',
+            textShadow: '0 0 3px rgba(0,0,0,0.9)',
+            pointerEvents: 'none',
           }}
         >
-          <button onClick={togglePlay} disabled={!ready || exporting || !project} style={btn}>
-            {playing ? 'Pause' : 'Play'}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={dur}
-            value={playheadMs}
-            disabled={!project}
-            onChange={(e) => {
-              playingRef.current = false;
-              setPlaying(false);
-              audioPreviewRef.current?.stop();
-              seek(Number(e.target.value));
-            }}
-            style={{ flex: 1, minWidth: 110 }}
-          />
-          <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 13, opacity: 0.7 }}>
-            {(playheadMs / 1000).toFixed(1)}s / {(dur / 1000).toFixed(1)}s
-          </span>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {(['video', 'gif'] as const).map((f) => (
-              <button
-                key={f}
-                data-testid={`export-format-${f}`}
-                onClick={() => setExportFormat(f)}
-                disabled={exporting}
-                title={f === 'gif' ? 'Animated GIF — smaller frame rate, no audio' : 'MP4 / WebM video'}
-                style={{
-                  ...btn,
-                  padding: '8px 10px',
-                  fontSize: 11,
-                  background: exportFormat === f ? '#34496b' : '#1c2a42',
-                  borderColor: exportFormat === f ? '#4a6592' : '#34496b',
-                }}
-              >
-                {f === 'video' ? 'MP4' : 'GIF'}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={runExport}
-            data-testid="export-button"
-            disabled={!ready || exporting || !project}
-            style={{ ...btn, background: '#e8590c', borderColor: '#e8590c' }}
-          >
-            {exporting
-              ? `Exporting ${(progress * 100).toFixed(0)}%`
-              : `Export ${exportFormat === 'gif' ? 'GIF' : 'video'}`}
-          </button>
+          {styleRef.current.attribution}
         </div>
-
-        {mode === 'studio' && project && (
-          <Timeline
-            project={project}
-            stops={stops}
-            playheadMs={playheadMs}
-            legDurations={legDurations}
-            stopDwells={stopDwells}
-            selected={selected}
-            onSelect={setSelected}
-            onSeek={seek}
-            onSetLegDuration={(i, ms) =>
-              setLegDurations((prev) => {
-                const next = [...prev];
-                while (next.length < stops.length - 1) next.push(null);
-                next[i] = ms;
-                return next;
-              })
-            }
-            onSetStopDwell={(i, ms) =>
-              setStopDwells((prev) => {
-                const next = [...prev];
-                while (next.length < stops.length) next.push(null);
-                next[i] = ms;
-                return next;
-              })
-            }
-            onReset={() => {
-              setLegDurations([]);
-              setStopDwells([]);
-              setSelected(null);
+        {(styleLoading || !project) && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'grid',
+              placeItems: 'center',
+              background: 'rgba(9,15,26,0.6)',
+              fontSize: 14,
+              textAlign: 'center',
+              padding: 20,
             }}
-          />
-        )}
-
-        {error && <p style={{ color: '#ff8787', fontSize: 13 }}>{error}</p>}
-        {mapErrors.length > 0 && (
-          <div style={{ color: '#ffa8a8', fontSize: 12, marginTop: 4 }}>
-            Map errors:
-            <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
-              {mapErrors.map((m, i) => (
-                <li key={i}>{m}</li>
-              ))}
-            </ul>
+          >
+            {!project ? 'Add at least two stops to build an animation.' : 'Loading style…'}
           </div>
         )}
-        {result && downloadUrl && (
-          <p style={{ fontSize: 13, opacity: 0.85 }}>
-            {result.frames} frames · {result.codec}
-            {result.audio === 'included' && ' + audio'} · {(result.blob.size / 1e6).toFixed(1)} MB ·{' '}
-            {(result.wallMs / 1000).toFixed(1)}s ({result.realtimeFactor.toFixed(2)}× realtime) ·{' '}
-            <a href={downloadUrl} download={`mapmotion.${result.ext}`} style={{ color: '#74c0fc' }}>
-              download .{result.ext}
-            </a>
-            {result.audio !== 'included' && result.audio !== 'none' && (
-              <span data-testid="audio-outcome" style={{ color: '#ffc078', display: 'block', fontSize: 12, marginTop: 2 }}>
-                {result.audio === 'unsupported-format'
-                  ? 'GIF has no audio track — export as MP4 to keep the music.'
-                  : result.audio === 'unsupported-encoder'
-                    ? 'This browser has no audio encoder, so the video is silent. Chrome or Edge will include it.'
-                    : 'The soundtrack could not be encoded, so the video is silent.'}
-              </span>
-            )}
-          </p>
+        {contextLost && (
+          <div
+            data-testid="context-lost"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'grid',
+              placeItems: 'center',
+              background: 'rgba(9,15,26,0.85)',
+              fontSize: 13,
+              textAlign: 'center',
+              padding: 20,
+            }}
+          >
+            The browser dropped the map&apos;s graphics context — usually low
+            memory. It should come back on its own; reload if it doesn&apos;t.
+          </div>
         )}
-      </section>
-    </main>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: narrow ? 8 : 12,
+          alignItems: 'center',
+          marginTop: 12,
+          width: narrow ? '100%' : dims.width * scale,
+          maxWidth: '100%',
+        }}
+      >
+        <button onClick={togglePlay} disabled={!ready || exporting || !project} style={btn}>
+          {playing ? 'Pause' : 'Play'}
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={dur}
+          value={playheadMs}
+          disabled={!project}
+          onChange={(e) => {
+            playingRef.current = false;
+            setPlaying(false);
+            audioPreviewRef.current?.stop();
+            seek(Number(e.target.value));
+          }}
+          style={{ flex: 1, minWidth: 110 }}
+        />
+        <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 13, opacity: 0.7 }}>
+          {(playheadMs / 1000).toFixed(1)}s / {(dur / 1000).toFixed(1)}s
+        </span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {(['video', 'gif'] as const).map((f) => (
+            <button
+              key={f}
+              data-testid={`export-format-${f}`}
+              onClick={() => setExportFormat(f)}
+              disabled={exporting}
+              title={f === 'gif' ? 'Animated GIF — smaller frame rate, no audio' : 'MP4 / WebM video'}
+              style={{
+                ...btn,
+                padding: '8px 10px',
+                fontSize: 11,
+                background: exportFormat === f ? '#34496b' : '#1c2a42',
+                borderColor: exportFormat === f ? '#4a6592' : '#34496b',
+              }}
+            >
+              {f === 'video' ? 'MP4' : 'GIF'}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={runExport}
+          data-testid="export-button"
+          disabled={!ready || exporting || !project}
+          style={{ ...btn, background: '#e8590c', borderColor: '#e8590c' }}
+        >
+          {exporting
+            ? `Exporting ${(progress * 100).toFixed(0)}%`
+            : `Export ${exportFormat === 'gif' ? 'GIF' : 'video'}`}
+        </button>
+      </div>
+
+      {mode === 'studio' && project && (
+        <Timeline
+          project={project}
+          stops={stops}
+          playheadMs={playheadMs}
+          legDurations={legDurations}
+          stopDwells={stopDwells}
+          selected={selected}
+          onSelect={setSelected}
+          onSeek={seek}
+          onSetLegDuration={(i, ms) =>
+            setLegDurations((prev) => {
+              const next = [...prev];
+              while (next.length < stops.length - 1) next.push(null);
+              next[i] = ms;
+              return next;
+            })
+          }
+          onSetStopDwell={(i, ms) =>
+            setStopDwells((prev) => {
+              const next = [...prev];
+              while (next.length < stops.length) next.push(null);
+              next[i] = ms;
+              return next;
+            })
+          }
+          onReset={() => {
+            setLegDurations([]);
+            setStopDwells([]);
+            setSelected(null);
+          }}
+        />
+      )}
+
+      {error && <p style={{ color: '#ff8787', fontSize: 13 }}>{error}</p>}
+      {mapErrors.length > 0 && (
+        <div style={{ color: '#ffa8a8', fontSize: 12, marginTop: 4 }}>
+          Map errors:
+          <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+            {mapErrors.map((m, i) => (
+              <li key={i}>{m}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {result && downloadUrl && (
+        <p style={{ fontSize: 13, opacity: 0.85 }}>
+          {result.frames} frames · {result.codec}
+          {result.audio === 'included' && ' + audio'} · {(result.blob.size / 1e6).toFixed(1)} MB ·{' '}
+          {(result.wallMs / 1000).toFixed(1)}s ({result.realtimeFactor.toFixed(2)}× realtime) ·{' '}
+          <a href={downloadUrl} download={`mapmotion.${result.ext}`} style={{ color: '#74c0fc' }}>
+            download .{result.ext}
+          </a>
+          {result.audio !== 'included' && result.audio !== 'none' && (
+            <span data-testid="audio-outcome" style={{ color: '#ffc078', display: 'block', fontSize: 12, marginTop: 2 }}>
+              {result.audio === 'unsupported-format'
+                ? 'GIF has no audio track — export as MP4 to keep the music.'
+                : result.audio === 'unsupported-encoder'
+                  ? 'This browser has no audio encoder, so the video is silent. Chrome or Edge will include it.'
+                  : 'The soundtrack could not be encoded, so the video is silent.'}
+            </span>
+          )}
+        </p>
+      )}
+    </div>
+  );
+
+  return (
+    <EditorShell
+      panels={panels}
+      header={header}
+      stage={stage}
+      narrow={narrow}
+      activeId={activePanel}
+      onActivate={setActivePanel}
+      storyboard={
+        <Storyboard
+          stops={stops}
+          dwells={segments.dwells}
+          legs={segments.legs}
+          thumbnails={pinOverrides}
+          selected={selected}
+          playheadMs={playheadMs}
+          onSelect={(sel) => {
+            setSelected(sel);
+            // Selecting a stop should take you to the controls for it, not
+            // leave you to work out which tab they live in.
+            if (sel) setActivePanel('trip');
+          }}
+          onSeek={seek}
+        />
+      }
+    />
   );
 }
 
