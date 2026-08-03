@@ -214,8 +214,11 @@ export function compileTrip(
     return norm360(routeBearings[idx]! + bearing);
   };
 
+  // 'glide' rather than 'easeInOutCubic': the default has to work in a chain.
+  // An explicit per-leg or per-project choice still wins, because someone who
+  // asks for a hard ease-in-out on one leg means it.
   const easingFor = (legIndex: number): EasingId =>
-    opts.legEasings?.[legIndex] ?? opts.travelEasing ?? 'easeInOutCubic';
+    opts.legEasings?.[legIndex] ?? opts.travelEasing ?? 'glide';
 
   const camera: CameraKeyframe[] = [];
   const routes: Project['routes'] = [];
@@ -275,9 +278,10 @@ export function compileTrip(
         bearingFor(i - 1, 'depart') + orbitFor(i - 1),
         pitchFor(i - 1),
       ),
-      // A dwell is a rotation in place; sine in/out reads smoother than cubic
-      // when the camera is orbiting rather than travelling.
-      easing: 'easeInOutSine',
+      // A dwell is a rotation in place. 'glide' hands the orbit's speed
+      // straight over to the departing leg instead of parking the camera at
+      // the junction, which is where the stutter used to live.
+      easing: 'glide',
     });
 
     const color = opts.legColors?.[legIndex] ?? opts.routeColor ?? '#e8590c';
@@ -321,7 +325,9 @@ export function compileTrip(
       bearingFor(lastIndex, 'arrive') + orbitFor(lastIndex),
       pitchFor(lastIndex),
     ),
-    easing: 'easeInOutSine',
+    // Also 'glide' — being the last keyframe, it resolves to a full stop, so
+    // the video still comes to rest rather than being cut off mid-orbit.
+    easing: 'glide',
   });
 
   const format: ProjectFormat = {

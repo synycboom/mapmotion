@@ -375,6 +375,18 @@ export default function Editor() {
         attributionControl: false,
         pixelRatio: 1,
         fadeDuration: 0,
+        // The exporter reads this canvas back with drawImage() after awaiting
+        // a settle, which is a different task from the one that rendered it.
+        // Without this the contents of the drawing buffer at that point are
+        // undefined — the headful-style suite documents getting an empty
+        // buffer doing exactly this. It could not be made to fail under
+        // SwiftShader here, so this is insurance rather than a measured fix,
+        // but the failure it insures against is a black or stale frame in a
+        // finished export and the measured cost was nil.
+        //
+        // maxTileCacheZoomLevels was tried here too and reverted: it changed
+        // tiles fetched across a six-stop fly-through from 61 to 61.
+        canvasContextAttributes: { preserveDrawingBuffer: true },
       });
       mapRef.current = map;
       window.__map = map;
@@ -603,6 +615,7 @@ export default function Editor() {
         frames: res.frames,
         wallMs: Math.round(res.wallMs),
         realtimeFactor: Math.round(res.realtimeFactor * 100) / 100,
+        incompleteFrames: res.incompleteFrames,
         bytes: res.blob.size,
       };
     } catch (e) {
@@ -875,6 +888,11 @@ export default function Editor() {
         bytes: res.blob.size,
         wall_s: Math.round(res.wallMs / 100) / 10,
         realtime_factor: Math.round(res.realtimeFactor * 100) / 100,
+        // A count, not content. If this is routinely non-zero in the field it
+        // means the default settle budget is wrong for real connections, and
+        // that is not something reasoning from a localhost test server can
+        // tell us.
+        incomplete_frames: res.incompleteFrames,
       });
     } catch (e) {
       setError(String(e));
@@ -1729,6 +1747,16 @@ export default function Editor() {
                 : result.audio === 'unsupported-encoder'
                   ? 'This browser has no audio encoder, so the video is silent. Chrome or Edge will include it.'
                   : 'The soundtrack could not be encoded, so the video is silent.'}
+            </span>
+          )}
+          {result.incompleteFrames > 0 && (
+            <span
+              data-testid="incomplete-frames"
+              style={{ color: '#ffc078', display: 'block', fontSize: 12, marginTop: 2 }}
+            >
+              {result.incompleteFrames} of {result.frames} frames were captured before the
+              map finished loading and may show gaps. A faster connection, or a simpler map
+              style, will fix it.
             </span>
           )}
         </p>

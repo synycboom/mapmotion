@@ -34,6 +34,15 @@ export interface ExportResult {
   audio: AudioOutcome;
   /** Audio codec actually used, when one was. */
   audioCodec?: string;
+  /**
+   * Frames captured while the map was still loading.
+   *
+   * Zero on any healthy export. A non-zero count means the basemap could not
+   * keep up and those frames may show missing tiles — worth telling the user,
+   * because the alternative is that they watch the video, spot a flicker, and
+   * conclude the product is broken.
+   */
+  incompleteFrames: number;
 }
 
 export interface ExportOptions {
@@ -177,6 +186,8 @@ export async function exportVideo(
   applier.apply(sceneAt(project, 0));
   await settle(map, Math.max(4000, settleCapMs * 3));
 
+  let incompleteFrames = 0;
+
   for (let i = 0; i < totalFrames; i++) {
     if (opts.signal?.aborted) throw new Error('export aborted');
     if (encoderError) throw encoderError;
@@ -184,7 +195,7 @@ export async function exportVideo(
     const tMs = (i / fps) * 1000;
     const frame = sceneAt(project, tMs);
     applier.apply(frame);
-    await settle(map, settleCapMs);
+    if (!(await settle(map, settleCapMs))) incompleteFrames++;
 
     ctx.drawImage(mapCanvas, 0, 0, width, height);
     // Same function the preview uses, so titles land identically.
@@ -221,6 +232,7 @@ export async function exportVideo(
     realtimeFactor: wallMs / durationMs,
     audio: audioOutcome,
     audioCodec: audioPlan.ok ? audioPlan.codec : undefined,
+    incompleteFrames,
   };
 }
 
@@ -375,21 +387,77 @@ function bitrateFor(width: number, height: number, fps: number): number {
 }
 
 /**
- * Wait until the map has re-rendered and settled after a jumpTo/setData.
- * GeoJSON-only styles settle almost immediately; remote glyphs/tiles get up
- * to `capMs`. The cap keeps a lost network request from stalling the export.
+ * How much longer than the per-frame budget we will wait for a map that is
+ * demonstrably still loading. The soft cap covers the normal case; this
+ * covers the user on a slow connection, whose export should take longer
+ * rather than come out full of holes.
  */
-function settle(map: MLMap, capMs: number): Promise<void> {
+const SETTLE_HARD_MULTIPLE = 6;
+const SETTLE_HARD_FLOOR_MS = 8000;
+
+/**
+ * Wait until the map has re-rendered and settled after a jumpTo/setData.
+ *
+ * Resolves `true` if the map genuinely finished, `false` if we gave up on it
+ * and the frame about to be captured may be incomplete.
+ *
+ * The version this replaces had three faults, all of which only showed up
+ * when a tile took real network time — which never happens against a
+ * localhost test server, and always happens to a user far from the CDN:
+ *
+ *  1. On timeout it resolved unconditionally. It never asked whether the map
+ *     had actually loaded, so a slow frame was captured half-drawn and
+ *     nothing anywhere recorded that it had happened.
+ *  2. `map.once('idle')` was left attached whenever the timer won the race.
+ *     Over a few hundred slow frames that is a few hundred live closures,
+ *     each pinning a promise, all firing together on the next idle.
+ *  3. There was no ceiling distinct from the budget, so the only two
+ *     available behaviours were "give up early" and "hang forever".
+ */
+async function settle(map: MLMap, capMs: number): Promise<boolean> {
+  const hardCapMs = Math.max(SETTLE_HARD_FLOOR_MS, capMs * SETTLE_HARD_MULTIPLE);
+  const started = performance.now();
+
+  // The soft wait: what almost every frame does, and what keeps the export
+  // fast when the network is behaving.
+  if (await waitForIdle(map, capMs)) return true;
+
+  // Past the budget. Before accepting a possibly-incomplete frame, ask the
+  // map directly — `idle` is an event and can be missed, but these are state.
+  while (performance.now() - started < hardCapMs) {
+    if (isSettled(map)) return true;
+    if (await waitForIdle(map, 250)) return true;
+  }
+  return isSettled(map);
+}
+
+/** Has the map finished everything it knows about? */
+function isSettled(map: MLMap): boolean {
+  try {
+    // `loaded()` covers style, sources and pending tiles. `areTilesLoaded()`
+    // is checked separately because a source added after style load can
+    // briefly satisfy one and not the other.
+    return map.loaded() && map.areTilesLoaded();
+  } catch {
+    // A map torn down mid-export should end the wait, not trap it.
+    return true;
+  }
+}
+
+function waitForIdle(map: MLMap, ms: number): Promise<boolean> {
   return new Promise((resolve) => {
     let done = false;
-    const finish = () => {
+    const finish = (idled: boolean) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      resolve();
+      // Removing the listener is the whole point of not using `once` here.
+      map.off('idle', onIdle);
+      resolve(idled);
     };
-    const timer = setTimeout(finish, capMs);
-    map.once('idle', finish);
+    const onIdle = () => finish(true);
+    const timer = setTimeout(() => finish(false), ms);
+    map.on('idle', onIdle);
     map.triggerRepaint();
   });
 }
@@ -462,13 +530,15 @@ async function exportGif(
   applier.apply(sceneAt(project, 0));
   await settle(map, Math.max(4000, settleCapMs * 3));
 
+  let incompleteFrames = 0;
+
   for (let i = 0; i < totalFrames; i++) {
     if (opts.signal?.aborted) throw new Error('export aborted');
 
     const tMs = (i / gifFps) * 1000;
     const frame = sceneAt(project, tMs);
     applier.apply(frame);
-    await settle(map, settleCapMs);
+    if (!(await settle(map, settleCapMs))) incompleteFrames++;
 
     ctx.drawImage(mapCanvas, 0, 0, width, height);
     drawTitles(ctx, frame.titles, width, height);
@@ -501,5 +571,6 @@ async function exportGif(
     // GIF has no audio track. Saying so beats leaving the user to work out
     // why their soundtrack vanished.
     audio: opts.audio ? 'unsupported-format' : 'none',
+    incompleteFrames,
   };
 }

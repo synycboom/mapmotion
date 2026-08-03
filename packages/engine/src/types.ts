@@ -30,7 +30,15 @@ export type EasingId =
   | 'easeInCubic'
   | 'easeOutCubic'
   | 'easeInOutCubic'
-  | 'easeInOutSine';
+  | 'easeInOutSine'
+  /**
+   * Hands over to the next segment still moving, instead of stopping dead at
+   * the keyframe. Only meaningful in a chain — `cameraAt` looks at the
+   * neighbouring segments to decide whether each end of this one should come
+   * to rest, so the same id behaves correctly at the start of a video, in the
+   * middle of a fly-through, and either side of a deliberate pause.
+   */
+  | 'glide';
 
 export interface ProjectFormat {
   width: number;

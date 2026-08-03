@@ -3,6 +3,7 @@
 import {
   ARC,
   BEARING_MODES,
+  DEFAULT_ORBIT_DEG,
   ZOOM_PRESETS,
   type BearingMode,
   type EasingId,
@@ -39,8 +40,8 @@ export function CameraPanel({
     Math.abs(camera.arc - ARC.default) < 1e-6 &&
     camera.bearingMode === 'fixed' &&
     camera.bearing === 0 &&
-    camera.orbit === 0 &&
-    camera.easing === 'easeInOutCubic' &&
+    camera.orbit === DEFAULT_ORBIT_DEG &&
+    camera.easing === 'glide' &&
     pitch === 0 &&
     !camera.stopZooms.some((z) => z !== null && z !== undefined);
 
@@ -58,8 +59,8 @@ export function CameraPanel({
               arc: ARC.default,
               bearingMode: 'fixed',
               bearing: 0,
-              orbit: 0,
-              easing: 'easeInOutCubic',
+              orbit: DEFAULT_ORBIT_DEG,
+              easing: 'glide',
               stopZooms: [],
             });
             onPitchChange(0);

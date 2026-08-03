@@ -148,6 +148,22 @@ export function travelBearings(stops: readonly { coordinate: LngLat }[]): number
 /** Orbit is a rotation applied across a stop's dwell. Keep it sane. */
 export const MAX_ORBIT_DEG = 180;
 
+/**
+ * Default rotation applied across each dwell.
+ *
+ * Zero was the old default and it meant every stop was a completely frozen
+ * frame — with the stock 1400ms dwell and 2600ms leg, a three-stop trip spent
+ * 45% of its running time on a motionless camera, in 1.4-second blocks. No
+ * amount of easing work fixes that, because there is genuinely nothing to
+ * interpolate between two identical keyframes.
+ *
+ * 12° over a dwell is a drift rather than a spin: roughly 1.5 screen pixels
+ * per frame at 30fps, enough that the video never stops and little enough
+ * that labels stay readable and the stop still reads as a pause. Set it to 0
+ * to get the old dead hold back.
+ */
+export const DEFAULT_ORBIT_DEG = 12;
+
 export function clampOrbit(v: number | undefined): number {
   if (v === undefined || !Number.isFinite(v)) return 0;
   return Math.min(MAX_ORBIT_DEG, Math.max(-MAX_ORBIT_DEG, Math.round(v)));

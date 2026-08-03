@@ -1,10 +1,11 @@
 import type {
+  CameraKeyframe,
   CameraState,
   FrameState,
   Project,
   VehicleState,
 } from './types';
-import { ease } from './easing';
+import { ease, glide, GLIDE_V } from './easing';
 import { flyInterpolate } from './camera';
 import { titlesAt } from './title';
 import { annotationsAt } from './annotate';
@@ -120,9 +121,46 @@ export function cameraAt(project: Project, tMs: number): CameraState {
   const k0 = kfs[i - 1]!;
   const k1 = kfs[i]!;
   const local = (tMs - k0.tMs) / Math.max(1, k1.tMs - k0.tMs);
-  const eased = ease(k1.easing, local);
+  const eased =
+    k1.easing === 'glide'
+      ? glide(local, handoverIn(kfs, i), handoverOut(kfs, i))
+      : ease(k1.easing, local);
   return flyInterpolate(k0.camera, k1.camera, eased, {
     size: [project.format.width, project.format.height],
     rho: k1.rho,
   });
+}
+
+/**
+ * Speed to carry into the segment ending at `i`, and out the other side.
+ *
+ * Derived here rather than stored on the keyframe so the two can never
+ * disagree: a segment's ends are governed entirely by what sits next to it,
+ * and that is knowable from the array. Coming to rest is correct in exactly
+ * two situations — the edges of the video, and the boundary with a segment
+ * that does not move at all. A dwell with no orbit is the second case: the
+ * camera really is stopping there, and a leg that ploughed into it at speed
+ * would read as the video hitting a wall.
+ */
+function handoverIn(kfs: readonly CameraKeyframe[], i: number): number {
+  if (i - 1 === 0) return 0;
+  return isStatic(kfs[i - 2]!, kfs[i - 1]!) ? 0 : GLIDE_V;
+}
+
+function handoverOut(kfs: readonly CameraKeyframe[], i: number): number {
+  if (i === kfs.length - 1) return 0;
+  return isStatic(kfs[i]!, kfs[i + 1]!) ? 0 : GLIDE_V;
+}
+
+/** Does the camera go anywhere at all between these two keyframes? */
+function isStatic(a: CameraKeyframe, b: CameraKeyframe): boolean {
+  const c0 = a.camera;
+  const c1 = b.camera;
+  return (
+    Math.abs(c0.center[0] - c1.center[0]) < 1e-9 &&
+    Math.abs(c0.center[1] - c1.center[1]) < 1e-9 &&
+    Math.abs(c0.zoom - c1.zoom) < 1e-6 &&
+    Math.abs(c0.bearing - c1.bearing) < 1e-6 &&
+    Math.abs((c0.pitch ?? 0) - (c1.pitch ?? 0)) < 1e-6
+  );
 }

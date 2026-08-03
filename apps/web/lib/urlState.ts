@@ -4,6 +4,7 @@ import {
   clampOrbit,
   clampZoom,
   codeToMode,
+  DEFAULT_ORBIT_DEG,
   isBearingMode,
   modeToCode,
   zoomPreset,
@@ -47,8 +48,17 @@ export const DEFAULT_APPEARANCE: MapAppearance = {
 
 const LABEL_ORDER = ['places', 'countries', 'roads', 'water', 'pois'] as const;
 
-/** Easings offered in the UI, in the order they're shown. */
+/**
+ * Easings offered in the UI, in the order they're shown.
+ *
+ * 'Flowing' is first because it is the default and the only one that behaves
+ * correctly in a chain — the others all stop the camera dead at the keyframe,
+ * which is fine for a single leg and reads as a stutter across a whole trip.
+ * They stay offered because a deliberate hard stop on one leg is a legitimate
+ * thing to want.
+ */
 export const EASING_CHOICES: readonly { id: EasingId; label: string }[] = [
+  { id: 'glide', label: 'Flowing' },
   { id: 'easeInOutCubic', label: 'Smooth' },
   { id: 'easeInOutSine', label: 'Gentle' },
   { id: 'easeOutCubic', label: 'Snap out' },
@@ -57,6 +67,7 @@ export const EASING_CHOICES: readonly { id: EasingId; label: string }[] = [
 ];
 
 const EASING_CODES: Record<EasingId, string> = {
+  glide: 'g',
   easeInOutCubic: 'c',
   easeInOutSine: 's',
   easeOutCubic: 'o',
@@ -92,8 +103,11 @@ export const DEFAULT_CAMERA: CameraSettings = {
   arc: ARC.default,
   bearingMode: 'fixed',
   bearing: 0,
-  orbit: 0,
-  easing: 'easeInOutCubic',
+  orbit: DEFAULT_ORBIT_DEG,
+  // 'glide' rather than 'easeInOutCubic'. This value is passed straight
+  // through to compileTrip as `travelEasing`, so it — not the compiler's own
+  // fallback — is what every real user gets.
+  easing: 'glide',
   stopZooms: [],
 };
 
